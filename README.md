@@ -2,9 +2,7 @@
 
 As part of this bachelor's thesis, a mobile application for the analysis of movement biomechanics will be developed for the Android and iOS platform. This application will utilize the Google ML Kit Pose Detection API, which enables automatic tracking of joints during the execution of various exercises. The mobile application will be developed using Flutter and Firebase. The goal is to enable precise measurement of user mobility based on recorded video and to provide feedback to users, thereby improving training, rehabilitation, and reducing the risk of injuries. 
 
-## Info
-
- Technology:
+##  Technology:
 
     Frontend: Flutter
 
