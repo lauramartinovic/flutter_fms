@@ -1,16 +1,19 @@
-# flutter_fms
+# Application of Computer Vision in Biomechanical Motion Analysis
 
-A new Flutter project.
+As part of this bachelor's thesis, a mobile application for the analysis of movement biomechanics will be developed for the Android and iOS platform. This application will utilize the Google ML Kit Pose Detection API, which enables automatic tracking of joints during the execution of various exercises. The mobile application will be developed using Flutter and Firebase. The goal is to enable precise measurement of user mobility based on recorded video and to provide feedback to users, thereby improving training, rehabilitation, and reducing the risk of injuries. 
 
-## Getting Started
+## Info
 
-This project is a starting point for a Flutter application.
+ Technology:
 
-A few resources to get you started if this is your first Flutter project:
+    Frontend: Flutter
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+    Backend & Services: Firebase
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+        Firebase Authentication for secure user management.
+
+        Cloud Storage for Firebase for video uploads.
+
+        Cloud Firestore for structured session data and history.
+
+        Google ML Kit for intelligent pose estimation and analysis. 
