@@ -1,4 +1,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- Camera and Microphone for recording video -->
+
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
+    <!-- Read/Write external storage for saving and accessing videos/photos -->
+
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+
+    <!-- For Android 13+ (API 33+), granular media permissions might be preferred instead of READ_EXTERNAL_STORAGE -->
+
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+
     <application
         android:label="flutter_fms"
         android:name="${applicationName}"

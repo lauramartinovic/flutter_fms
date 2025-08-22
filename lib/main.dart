@@ -10,9 +10,14 @@ import 'screens/auth/auth_screen.dart'; // Your combined auth screen
 import 'screens/home/home_screen.dart'; // Your home screen
 import 'services/auth_service.dart'; // Your AuthService
 import 'providers/auth_provider.dart'; // Your AuthProvider
+import 'package:camera/camera.dart'; // Import camera package
 
+List<CameraDescription> cameras =
+    []; // Global variable to hold camera descriptions
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized(); // Ensure Flutter widgets are initialized
+  cameras = await availableCameras(); // Get the list of available cameras
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   ); // Initialize Firebase
