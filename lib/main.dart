@@ -12,8 +12,7 @@ import 'services/auth_service.dart'; // Your AuthService
 import 'providers/auth_provider.dart'; // Your AuthProvider
 import 'package:camera/camera.dart'; // Import camera package
 
-List<CameraDescription> cameras =
-    []; // Global variable to hold camera descriptions
+List<CameraDescription> cameras = []; // Global variable to hold camera descriptions
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized(); // Ensure Flutter widgets are initialized
   cameras = await availableCameras(); // Get the list of available cameras
@@ -57,7 +56,8 @@ class MyApp extends StatelessWidget {
         useMaterial3: true, // Assuming you want Material 3 design
       ),
       // Based on the user's authentication status, show the appropriate screen
-      home: user == null ? const AuthScreen() : const HomeScreen(),
+      // MODIFIED: Pass the globally available 'cameras' list to HomeScreen
+      home: user == null ? const AuthScreen() : HomeScreen(cameras: cameras),
     );
   }
 }
