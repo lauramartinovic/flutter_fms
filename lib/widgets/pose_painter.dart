@@ -1,5 +1,3 @@
-// lib/widgets/pose_painter.dart
-
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:camera/camera.dart';
@@ -8,8 +6,7 @@ class PosePainter extends CustomPainter {
   final List<Pose> poses;
   final Size imageSize;
   final InputImageRotation rotation;
-  final CameraLensDirection
-  cameraLensDirection; // To correctly flip for front camera
+  final CameraLensDirection cameraLensDirection;
 
   PosePainter(
     this.poses,
@@ -18,109 +15,142 @@ class PosePainter extends CustomPainter {
     this.cameraLensDirection,
   );
 
+  // Clean, ML Kit–style paints
+  final Paint _leftPaint =
+      Paint()
+        ..color = Colors.greenAccent
+        ..strokeWidth = 4.0
+        ..style = PaintingStyle.stroke;
+
+  final Paint _rightPaint =
+      Paint()
+        ..color = Colors.lightBlueAccent
+        ..strokeWidth = 4.0
+        ..style = PaintingStyle.stroke;
+
+  final Paint _jointPaint =
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint paint =
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 4.0
-          ..color = Colors.greenAccent;
-
-    // Helper to scale points correctly for display
-    void paintLandmark(PoseLandmark landmark) {
-      final Offset offset = Offset(
-        _scaleX(landmark.x, size, cameraLensDirection),
-        _scaleY(landmark.y, size),
-      );
-      canvas.drawCircle(offset, 6.0, paint);
+    double sx(double x) {
+      final scale = size.width / imageSize.width;
+      if (cameraLensDirection == CameraLensDirection.front) {
+        return size.width - x * scale;
+      }
+      return x * scale;
     }
 
-    void paintLine(PoseLandmark start, PoseLandmark end) {
-      final Offset startOffset = Offset(
-        _scaleX(start.x, size, cameraLensDirection),
-        _scaleY(start.y, size),
-      );
-      final Offset endOffset = Offset(
-        _scaleX(end.x, size, cameraLensDirection),
-        _scaleY(end.y, size),
-      );
-      canvas.drawLine(startOffset, endOffset, paint);
+    double sy(double y) {
+      final scale = size.height / imageSize.height;
+      return y * scale;
+    }
+
+    void drawJoint(PoseLandmark? lmk) {
+      if (lmk == null) return;
+      canvas.drawCircle(Offset(sx(lmk.x), sy(lmk.y)), 4.0, _jointPaint);
+    }
+
+    void drawBone(PoseLandmark? a, PoseLandmark? b, Paint p) {
+      if (a == null || b == null) return;
+      canvas.drawLine(Offset(sx(a.x), sy(a.y)), Offset(sx(b.x), sy(b.y)), p);
     }
 
     for (final pose in poses) {
-      // Draw all landmarks
-      for (final landmark in pose.landmarks.values) {
-        paintLandmark(landmark);
-      }
+      final l = pose.landmarks;
 
-      // Draw connections for common body parts
-      void drawSegment(PoseLandmarkType type1, PoseLandmarkType type2) {
-        final PoseLandmark? landmark1 = pose.landmarks[type1];
-        final PoseLandmark? landmark2 = pose.landmarks[type2];
-        if (landmark1 != null && landmark2 != null) {
-          paintLine(landmark1, landmark2);
-        }
+      // Draw joints
+      for (final lm in l.values) {
+        drawJoint(lm);
       }
-
-      // Face
-      drawSegment(PoseLandmarkType.nose, PoseLandmarkType.rightEyeInner);
-      drawSegment(PoseLandmarkType.rightEyeInner, PoseLandmarkType.rightEye);
-      drawSegment(PoseLandmarkType.rightEye, PoseLandmarkType.rightEyeOuter);
-      drawSegment(PoseLandmarkType.rightEyeOuter, PoseLandmarkType.rightEar);
-      drawSegment(PoseLandmarkType.nose, PoseLandmarkType.leftEyeInner);
-      drawSegment(PoseLandmarkType.leftEyeInner, PoseLandmarkType.leftEye);
-      drawSegment(PoseLandmarkType.leftEye, PoseLandmarkType.leftEyeOuter);
-      drawSegment(PoseLandmarkType.leftEyeOuter, PoseLandmarkType.leftEar);
-      drawSegment(PoseLandmarkType.rightEar, PoseLandmarkType.rightMouth);
-      drawSegment(PoseLandmarkType.leftEar, PoseLandmarkType.leftMouth);
-      drawSegment(PoseLandmarkType.rightMouth, PoseLandmarkType.leftMouth);
 
       // Torso
-      drawSegment(
-        PoseLandmarkType.leftShoulder,
-        PoseLandmarkType.rightShoulder,
+      drawBone(
+        l[PoseLandmarkType.leftShoulder],
+        l[PoseLandmarkType.rightShoulder],
+        _rightPaint,
       );
-      drawSegment(PoseLandmarkType.leftShoulder, PoseLandmarkType.leftHip);
-      drawSegment(PoseLandmarkType.rightShoulder, PoseLandmarkType.rightHip);
-      drawSegment(PoseLandmarkType.leftHip, PoseLandmarkType.rightHip);
+      drawBone(
+        l[PoseLandmarkType.leftShoulder],
+        l[PoseLandmarkType.leftHip],
+        _leftPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.rightShoulder],
+        l[PoseLandmarkType.rightHip],
+        _rightPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.leftHip],
+        l[PoseLandmarkType.rightHip],
+        _rightPaint,
+      );
 
       // Arms
-      drawSegment(PoseLandmarkType.leftShoulder, PoseLandmarkType.leftElbow);
-      drawSegment(PoseLandmarkType.leftElbow, PoseLandmarkType.leftWrist);
-      drawSegment(PoseLandmarkType.rightShoulder, PoseLandmarkType.rightElbow);
-      drawSegment(PoseLandmarkType.rightElbow, PoseLandmarkType.rightWrist);
+      drawBone(
+        l[PoseLandmarkType.leftShoulder],
+        l[PoseLandmarkType.leftElbow],
+        _leftPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.leftElbow],
+        l[PoseLandmarkType.leftWrist],
+        _leftPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.rightShoulder],
+        l[PoseLandmarkType.rightElbow],
+        _rightPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.rightElbow],
+        l[PoseLandmarkType.rightWrist],
+        _rightPaint,
+      );
 
       // Legs
-      drawSegment(PoseLandmarkType.leftHip, PoseLandmarkType.leftKnee);
-      drawSegment(PoseLandmarkType.leftKnee, PoseLandmarkType.leftAnkle);
-      drawSegment(PoseLandmarkType.rightHip, PoseLandmarkType.rightKnee);
-      drawSegment(PoseLandmarkType.rightKnee, PoseLandmarkType.rightAnkle);
-      drawSegment(PoseLandmarkType.leftAnkle, PoseLandmarkType.leftHeel);
-      drawSegment(PoseLandmarkType.rightAnkle, PoseLandmarkType.rightHeel);
-      drawSegment(PoseLandmarkType.leftHeel, PoseLandmarkType.leftFootIndex);
-      drawSegment(PoseLandmarkType.rightHeel, PoseLandmarkType.rightFootIndex);
-      drawSegment(PoseLandmarkType.leftAnkle, PoseLandmarkType.leftFootIndex);
-      drawSegment(PoseLandmarkType.rightAnkle, PoseLandmarkType.rightFootIndex);
+      drawBone(
+        l[PoseLandmarkType.leftHip],
+        l[PoseLandmarkType.leftKnee],
+        _leftPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.leftKnee],
+        l[PoseLandmarkType.leftAnkle],
+        _leftPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.rightHip],
+        l[PoseLandmarkType.rightKnee],
+        _rightPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.rightKnee],
+        l[PoseLandmarkType.rightAnkle],
+        _rightPaint,
+      );
+
+      // Feet (optional but nice)
+      drawBone(
+        l[PoseLandmarkType.leftAnkle],
+        l[PoseLandmarkType.leftFootIndex],
+        _leftPaint,
+      );
+      drawBone(
+        l[PoseLandmarkType.rightAnkle],
+        l[PoseLandmarkType.rightFootIndex],
+        _rightPaint,
+      );
     }
   }
 
   @override
   bool shouldRepaint(covariant PosePainter oldDelegate) {
-    return oldDelegate.poses != poses; // Only repaint if poses data changes
-  }
-
-  // Scaling helper functions based on ML Kit's input image and display size
-  double _scaleX(double x, Size size, CameraLensDirection cameraLensDirection) {
-    double scale = size.width / imageSize.width;
-    if (cameraLensDirection == CameraLensDirection.front) {
-      // Flip X for front camera to mirror user's view
-      return size.width - (x * scale);
-    }
-    return x * scale;
-  }
-
-  double _scaleY(double y, Size size) {
-    double scale = size.height / imageSize.height;
-    return y * scale;
+    return oldDelegate.poses != poses ||
+        oldDelegate.imageSize != imageSize ||
+        oldDelegate.rotation != rotation ||
+        oldDelegate.cameraLensDirection != cameraLensDirection;
   }
 }
