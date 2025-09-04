@@ -1,8 +1,10 @@
+// lib/screens/fms_capture/fms_capture_screen.dart
+
 import 'package:flutter/services.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // 👈 Logout
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image_picker/image_picker.dart';
@@ -12,6 +14,7 @@ import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
 import 'package:flutter_fms/widgets/pose_painter.dart';
 import 'package:flutter_fms/utils/pose_analysis_utils.dart';
+import 'package:flutter_fms/services/auth_service.dart';
 
 class FMSCaptureScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -48,9 +51,6 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
   @override
   void dispose() {
-    try {
-      _cameraController?.stopImageStream();
-    } catch (_) {}
     _cameraController?.dispose();
     _poseDetector.close();
     super.dispose();
@@ -67,7 +67,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       _cameraController = CameraController(
         cam,
         ResolutionPreset.medium,
-        enableAudio: true,
+        enableAudio: true, // recording to gallery
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
       await _cameraController!.initialize();
@@ -185,7 +185,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         );
       }
 
-      await _finalizeAndSaveSessionScore(); // Firestore: exercise + score + timestamp (no video)
+      await _finalizeAndSaveSessionScore(); // Firestore: exercise + score + timestamp
     } on CameraException catch (e) {
       if (!mounted) return;
       setState(
@@ -194,7 +194,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
-  // Analyze from gallery (no video saved to Firestore, only score metadata)
+  // Analyze from gallery (no upload to history)
   Future<void> _analyzeVideoFromGallery() async {
     if (_selectedExercise == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -206,6 +206,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     final XFile? video = await picker.pickVideo(source: ImageSource.gallery);
     if (video == null) return;
 
+    // (Frame-by-frame analysis placeholder; we use live-stream heuristics for now)
     await _finalizeAndSaveSessionScore();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -239,11 +240,11 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     final session = FMSSessionModel(
       userId: user.uid,
-      timestamp: DateTime.now(),
+      timestamp: DateTime.now(), // server override in FirestoreService
       exercise: exerciseName,
       rating: _currentFmsScore,
       notes: '',
-      videoUrl: null,
+      videoUrl: null, // history doesn’t show video
     );
 
     try {
@@ -257,11 +258,24 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
+  // ---------------- UI helpers ----------------
   void _selectExerciseFromMenu(ExerciseType choice) {
     setState(() {
       _selectedExercise = choice;
     });
     _resetAnalysisState();
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await AuthService().signOut();
+      // AuthGate will route to login on null authState
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Sign out failed: $e')));
+    }
   }
 
   @override
@@ -275,7 +289,16 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     if (_errorMessage != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text(title)),
+        appBar: AppBar(
+          title: const Text(title),
+          actions: [
+            IconButton(
+              tooltip: 'Sign out',
+              icon: const Icon(Icons.logout),
+              onPressed: _signOut,
+            ),
+          ],
+        ),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -290,16 +313,42 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return Scaffold(
-        appBar: AppBar(title: const Text(title)),
+        appBar: AppBar(
+          title: const Text(title),
+          actions: [
+            IconButton(
+              tooltip: 'Sign out',
+              icon: const Icon(Icons.logout),
+              onPressed: _signOut,
+            ),
+          ],
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
+
+    // --- Precisely match overlay to CameraPreview (BoxFit.cover + mirroring) ---
+    final rotation =
+        InputImageRotationValue.fromRawValue(
+          _cameraController!.description.sensorOrientation,
+        ) ??
+        InputImageRotation.rotation0deg;
+
+    final Size preview = _cameraController!.value.previewSize!;
+    final bool swap =
+        rotation == InputImageRotation.rotation90deg ||
+        rotation == InputImageRotation.rotation270deg;
+
+    final Size imageSizeUpright =
+        swap
+            ? Size(preview.height, preview.width)
+            : Size(preview.width, preview.height);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text(title),
         actions: [
-          // Exercise selection MENU in toolbar (ostaje kao što si imala)
+          // Exercise picker (kept as-is)
           PopupMenuButton<ExerciseType>(
             tooltip: 'Select exercise',
             icon: Row(
@@ -318,6 +367,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
             ),
             onSelected: _selectExerciseFromMenu,
             itemBuilder: (context) {
+              // This will show whatever you have in ExerciseType.values (e.g., 3 most popular)
               return ExerciseType.values.map((e) {
                 return PopupMenuItem<ExerciseType>(
                   value: e,
@@ -326,39 +376,35 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
               }).toList();
             },
           ),
-          const SizedBox(width: 8),
-          // 👇 Logout gumb – dodan
+          const SizedBox(width: 6),
           IconButton(
-            tooltip: 'Logout',
+            tooltip: 'Sign out',
             icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-            },
+            onPressed: _signOut,
           ),
           const SizedBox(width: 6),
         ],
       ),
       body: Stack(
         children: [
+          // Camera
           Positioned.fill(child: CameraPreview(_cameraController!)),
 
+          // Pose overlay (perfectly aligned)
           if (_cameraController!.value.isInitialized &&
               _cameraController!.value.previewSize != null)
             Positioned.fill(
               child: CustomPaint(
                 painter: PosePainter(
                   _detectedPoses,
-                  _cameraController!.value.previewSize!,
-                  InputImageRotationValue.fromRawValue(
-                        _cameraController!.description.sensorOrientation,
-                      ) ??
-                      InputImageRotation.rotation0deg,
+                  imageSizeUpright,
+                  rotation,
                   _cameraController!.description.lensDirection,
                 ),
               ),
             ),
 
-          // Status chip (naziv vježbe + score) – ostaje
+          // Status chip
           SafeArea(
             child: Align(
               alignment: Alignment.topCenter,
@@ -401,7 +447,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
             ),
           ),
 
-          // Controls (ostaju)
+          // Bottom controls
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(

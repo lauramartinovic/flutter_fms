@@ -1,5 +1,3 @@
-// lib/services/firestore_service.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
@@ -9,83 +7,84 @@ class FirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   // -----------------------------
-  // User Profile Operations
+  // User Profile
   // -----------------------------
   Future<void> createUserProfile({
     required String uid,
     required String email,
     String? displayName,
+    int? age,
+    String? gender,
+    double? heightCm,
+    double? weightKg,
   }) async {
     try {
-      final userRef = _firestore.collection('users').doc(uid);
-      await userRef.set({
+      final doc = _firestore.collection('users').doc(uid);
+      final data = <String, dynamic>{
         'email': email,
         'displayName': displayName ?? email.split('@').first,
         'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      // print('User profile created/updated for $uid');
+      };
+      if (age != null) data['age'] = age;
+      if (gender != null) data['gender'] = gender;
+      if (heightCm != null) data['heightCm'] = heightCm;
+      if (weightKg != null) data['weightKg'] = weightKg;
+
+      await doc.set(data, SetOptions(merge: true));
     } catch (e) {
-      // print('Error creating/updating user profile: $e');
       throw Exception('Failed to create/update user profile: $e');
+    }
+  }
+
+  /// Partial update profila – proslijedi samo polja koja želiš mijenjati
+  Future<void> updateUserProfileFields({
+    required String uid,
+    required Map<String, dynamic> fields,
+  }) async {
+    try {
+      await _firestore.collection('users').doc(uid).update(fields);
+    } on FirebaseException catch (e) {
+      throw Exception('Failed to update profile: ${e.message}');
     }
   }
 
   Stream<UserProfileModel?> getUserProfile(String uid) {
     return _firestore.collection('users').doc(uid).snapshots().map((doc) {
-      if (doc.exists) {
-        return UserProfileModel.fromFirestore(doc);
-      }
-      return null;
+      if (!doc.exists) return null;
+      return UserProfileModel.fromFirestore(doc);
     });
   }
 
   // -----------------------------
-  // FMS Session Operations
+  // FMS Sessions
   // -----------------------------
-
-  /// Save a new FMS session. Uses server timestamp for consistent ordering.
   Future<String> saveFMSession(FMSSessionModel session) async {
     try {
       final data =
-          session.toMap()
-            ..['timestamp'] =
-                FieldValue.serverTimestamp(); // override to ensure server time
-
-      final docRef = await _firestore.collection('fms_sessions').add(data);
-      // print('FMS Session saved with ID: ${docRef.id}');
-      return docRef.id;
+          session.toMap()..['timestamp'] = FieldValue.serverTimestamp();
+      final ref = await _firestore.collection('fms_sessions').add(data);
+      return ref.id;
     } on FirebaseException catch (e) {
-      // print('Firestore Error saving FMS session: ${e.code} - ${e.message}');
       throw Exception('Failed to save FMS session: ${e.message}');
     } catch (e) {
-      // print('Error saving FMS session: $e');
-      throw Exception(
-        'An unexpected error occurred while saving FMS session: $e',
-      );
+      throw Exception('Unexpected error saving session: $e');
     }
   }
 
-  /// Stream sessions for the *current* authenticated user, newest first.
   Stream<List<FMSSessionModel>> getFMSSessionsForCurrentUser() {
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser == null) {
-      return Stream.value([]);
-    }
-
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return Stream.value([]);
     return _firestore
         .collection('fms_sessions')
-        .where('userId', isEqualTo: currentUser.uid)
+        .where('userId', isEqualTo: user.uid)
         .orderBy('timestamp', descending: true)
         .snapshots()
         .map(
-          (snapshot) =>
-              snapshot.docs
-                  .map((doc) => FMSSessionModel.fromFirestore(doc))
-                  .toList(),
+          (snap) =>
+              snap.docs.map((d) => FMSSessionModel.fromFirestore(d)).toList(),
         );
   }
 
-  /// Stream sessions for an arbitrary user (useful for coach/admin views).
   Stream<List<FMSSessionModel>> getFMSSessionsForUser(String uid) {
     return _firestore
         .collection('fms_sessions')
@@ -93,14 +92,11 @@ class FirestoreService {
         .orderBy('timestamp', descending: true)
         .snapshots()
         .map(
-          (snapshot) =>
-              snapshot.docs
-                  .map((doc) => FMSSessionModel.fromFirestore(doc))
-                  .toList(),
+          (snap) =>
+              snap.docs.map((d) => FMSSessionModel.fromFirestore(d)).toList(),
         );
   }
 
-  /// Update specific fields on a session (e.g., notes or corrected rating).
   Future<void> updateFMSSession({
     required String sessionId,
     required Map<String, dynamic> updates,
@@ -115,7 +111,6 @@ class FirestoreService {
     }
   }
 
-  /// Delete a session document.
   Future<void> deleteFMSSession(String sessionId) async {
     try {
       await _firestore.collection('fms_sessions').doc(sessionId).delete();

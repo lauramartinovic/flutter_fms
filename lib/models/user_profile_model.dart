@@ -5,13 +5,22 @@ class UserProfileModel {
   final String email;
   final String displayName;
   final DateTime createdAt;
-  // Add optional extras later, e.g. String? photoUrl;
+
+  // NOVO – opcionalni profil podaci
+  final int? age; // godina
+  final String? gender; // "male", "female", "other" (po dogovoru)
+  final double? heightCm; // visina u cm
+  final double? weightKg; // težina u kg
 
   const UserProfileModel({
     required this.uid,
     required this.email,
     required this.displayName,
     required this.createdAt,
+    this.age,
+    this.gender,
+    this.heightCm,
+    this.weightKg,
   });
 
   factory UserProfileModel.fromFirestore(DocumentSnapshot doc) {
@@ -23,15 +32,23 @@ class UserProfileModel {
       createdAt:
           (data['createdAt'] as Timestamp?)?.toDate() ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      age: (data['age'] as num?)?.toInt(),
+      gender: data['gender'] as String?,
+      heightCm: (data['heightCm'] as num?)?.toDouble(),
+      weightKg: (data['weightKg'] as num?)?.toDouble(),
     );
-    // Note: createdAt fallback prevents crash on missing field
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = <String, dynamic>{
       'email': email,
       'displayName': displayName,
       'createdAt': Timestamp.fromDate(createdAt),
     };
+    if (age != null) map['age'] = age;
+    if (gender != null) map['gender'] = gender;
+    if (heightCm != null) map['heightCm'] = heightCm;
+    if (weightKg != null) map['weightKg'] = weightKg;
+    return map;
   }
 }
