@@ -46,6 +46,7 @@ dependencies:
   google_mlkit_pose_detection: ^0.14.0 # <-- THESE ARE THE IMPORTANT LINES!
   google_mlkit_commons: ^0.11.0     # <-- THESE ARE THE IMPORTANT LINES!
   gallery_saver: ^2.3.2
+  google_fonts: ^4.0.4
 
 dev_dependencies:
   flutter_test:

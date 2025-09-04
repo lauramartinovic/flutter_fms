@@ -1,11 +1,8 @@
-// lib/screens/history/history_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
-import 'package:flutter_fms/screens/video_player/video_player.dart';
-import 'package:flutter_fms/utils/pose_analysis_utils.dart'; // for ExerciseType + exerciseNames
+import 'package:flutter_fms/utils/pose_analysis_utils.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -19,7 +16,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
   ExerciseType? _exerciseFilter; // null = All
   bool _sortDesc = true; // newest first
   String _query = '';
-
   final _dateFmt = DateFormat('yyyy-MM-dd HH:mm');
 
   String _formatTs(DateTime ts) {
@@ -28,11 +24,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   List<FMSSessionModel> _applyFilters(List<FMSSessionModel> items) {
-    // Filter by exercise (if any)
     final exName =
         _exerciseFilter == null
             ? null
             : (exerciseNames[_exerciseFilter!] ?? _exerciseFilter!.toString());
+
     var list =
         items.where((s) {
           final byExercise = exName == null || s.exercise == exName;
@@ -40,54 +36,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
           if (_query.trim().isEmpty) return true;
           final q = _query.toLowerCase();
-          return (s.exercise.toLowerCase().contains(q)) ||
-              (s.notes.toLowerCase().contains(q)) ||
-              (s.rating.toString().contains(q));
+          return s.exercise.toLowerCase().contains(q) ||
+              s.rating.toString().contains(q) ||
+              _formatTs(s.timestamp).toLowerCase().contains(q);
         }).toList();
 
-    // Sort by timestamp
     list.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     if (_sortDesc) list = list.reversed.toList();
     return list;
-  }
-
-  Future<void> _editNotes(BuildContext context, FMSSessionModel s) async {
-    final controller = TextEditingController(text: s.notes);
-    final saved = await showDialog<bool>(
-      context: context,
-      builder:
-          (_) => AlertDialog(
-            title: const Text('Edit notes'),
-            content: TextField(
-              controller: controller,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                hintText: 'Write notes…',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Save'),
-              ),
-            ],
-          ),
-    );
-    if (saved == true && s.id != null) {
-      await _firestore.updateFMSSession(
-        sessionId: s.id!,
-        updates: {'notes': controller.text},
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Notes updated')));
-    }
   }
 
   Future<bool?> _confirmDelete(BuildContext context, FMSSessionModel s) async {
@@ -111,7 +67,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ],
           ),
     );
-
     if (ok == true && s.id != null) {
       await _firestore.deleteFMSSession(s.id!);
       if (context.mounted) {
@@ -119,10 +74,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
           context,
         ).showSnackBar(const SnackBar(content: Text('Session deleted')));
       }
-      return true; // tell Dismissible to remove the widget
+      return true;
     }
-
-    return false; // keep the widget if cancel or failure
+    return false;
   }
 
   Widget _buildHeader(BuildContext context) {
@@ -133,12 +87,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Column(
           children: [
-            // Search
             TextField(
               onChanged: (v) => setState(() => _query = v),
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search),
-                hintText: 'Search (exercise, notes, score)…',
+                hintText: 'Search (exercise, score, date)…',
                 isDense: true,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -146,10 +99,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            // Filters row
             Row(
               children: [
-                // Exercise filter
                 Expanded(
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<ExerciseType?>(
@@ -173,7 +124,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Sort toggle
                 IconButton.outlined(
                   visualDensity: VisualDensity.compact,
                   onPressed: () => setState(() => _sortDesc = !_sortDesc),
@@ -190,8 +140,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget _buildTile(BuildContext context, FMSSessionModel s) {
     final dateStr = _formatTs(s.timestamp);
-    final hasVideo = s.videoUrl.isNotEmpty;
-
     return Dismissible(
       key: ValueKey(
         s.id ?? '${s.userId}_${s.timestamp.millisecondsSinceEpoch}',
@@ -218,88 +166,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
             horizontal: 14,
           ),
           title: Text(
-            '${s.exercise} — Score: ${s.rating}',
+            s.exercise,
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 4),
-              Text(dateStr, style: const TextStyle(color: Colors.deepPurple)),
-              const SizedBox(height: 6),
-              Text(
-                s.notes.isEmpty ? 'Notes: —' : 'Notes: ${s.notes}',
-                style: const TextStyle(fontStyle: FontStyle.italic),
-              ),
-            ],
-          ),
-          trailing: PopupMenuButton<String>(
-            onSelected: (choice) {
-              switch (choice) {
-                case 'play':
-                  if (hasVideo) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => VideoPlayerScreen(videoUrl: s.videoUrl),
-                      ),
-                    );
-                  }
-                  break;
-                case 'edit':
-                  _editNotes(context, s);
-                  break;
-                case 'delete':
-                  _confirmDelete(context, s);
-                  break;
-              }
-            },
-            itemBuilder:
-                (ctx) => [
-                  PopupMenuItem<String>(
-                    value: 'play',
-                    enabled: hasVideo,
-                    child: Row(
-                      children: const [
-                        Icon(Icons.play_circle_fill),
-                        SizedBox(width: 8),
-                        Text('View video'),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem<String>(
-                    value: 'edit',
-                    child: Row(
-                      children: [
-                        Icon(Icons.edit),
-                        SizedBox(width: 8),
-                        Text('Edit notes'),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem<String>(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete),
-                        SizedBox(width: 8),
-                        Text('Delete'),
-                      ],
-                    ),
-                  ),
-                ],
-          ),
-          onTap:
-              hasVideo
-                  ? () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => VideoPlayerScreen(videoUrl: s.videoUrl),
-                      ),
-                    );
-                  }
-                  : null,
+          subtitle: Text('$dateStr  •  Score: ${s.rating}'),
+          onTap: null,
         ),
       ),
     );
@@ -308,10 +179,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('FMS Session History'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('FMS Session History')),
       body: Column(
         children: [
           _buildHeader(context),

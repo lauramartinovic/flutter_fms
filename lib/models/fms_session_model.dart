@@ -4,19 +4,19 @@ class FMSSessionModel {
   final String? id; // Firestore document ID (null before save)
   final String userId; // Firebase Auth UID
   final DateTime timestamp; // When the session was recorded/saved
-  final String videoUrl; // Firebase Storage public URL
   final String exercise; // Human readable exercise name
   final int rating; // Numeric score 0–3
-  final String notes; // Free text notes
+  final String notes; // Free text notes (optional usage)
+  final String? videoUrl; // OPTIONAL: kept for backward-compat (unused now)
 
   const FMSSessionModel({
     this.id,
     required this.userId,
     required this.timestamp,
-    required this.videoUrl,
     required this.exercise,
     required this.rating,
     required this.notes,
+    this.videoUrl, // nullable and not required
   });
 
   factory FMSSessionModel.fromFirestore(DocumentSnapshot doc) {
@@ -27,21 +27,24 @@ class FMSSessionModel {
       timestamp:
           (data['timestamp'] as Timestamp?)?.toDate() ??
           DateTime.fromMillisecondsSinceEpoch(0),
-      videoUrl: (data['videoUrl'] ?? '') as String,
       exercise: (data['exercise'] ?? 'Unknown') as String,
       rating: (data['rating'] ?? 0) as int,
       notes: (data['notes'] ?? '') as String,
+      videoUrl: (data['videoUrl'] as String?), // may be absent
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = <String, dynamic>{
       'userId': userId,
       'timestamp': Timestamp.fromDate(timestamp),
-      'videoUrl': videoUrl,
       'exercise': exercise,
       'rating': rating,
       'notes': notes,
     };
+    if (videoUrl != null && videoUrl!.isNotEmpty) {
+      map['videoUrl'] = videoUrl;
+    }
+    return map;
   }
 }

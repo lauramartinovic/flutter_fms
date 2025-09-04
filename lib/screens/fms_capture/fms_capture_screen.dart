@@ -1,12 +1,13 @@
+import 'package:flutter/services.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart'; // WriteBuffer
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:gallery_saver/gallery_saver.dart';
 
-import 'package:flutter_fms/services/storage_service.dart';
 import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
 import 'package:flutter_fms/widgets/pose_painter.dart';
@@ -23,10 +24,8 @@ class FMSCaptureScreen extends StatefulWidget {
 class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   CameraController? _cameraController;
   bool _isRecording = false;
-  XFile? _capturedVideo;
   String? _errorMessage;
 
-  // Exercise selection + scoring
   ExerciseType? _selectedExercise;
   int _currentFmsScore = 0;
   final List<Pose> _poseHistory = [];
@@ -65,7 +64,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       _cameraController = CameraController(
         cam,
         ResolutionPreset.medium,
-        enableAudio: true,
+        enableAudio: true, // snimamo video koji ide u galeriju
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
       await _cameraController!.initialize();
@@ -83,7 +82,6 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         _processCameraImage(image, rotation)
             .then((_) {
               if (_isRecording && _detectedPoses.isNotEmpty) {
-                // Store one pose per frame for later scoring
                 _poseHistory.add(_detectedPoses.first);
               }
               _isDetecting = false;
@@ -104,7 +102,6 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
-  // New commons API (InputImageMetadata)
   Future<void> _processCameraImage(
     CameraImage image,
     InputImageRotation rotation,
@@ -131,6 +128,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     if (mounted) setState(() => _detectedPoses = poses);
   }
 
+  // --------- Recording controls (save to device gallery) ----------
   Future<void> _startVideoRecording() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       setState(() => _errorMessage = 'Camera not initialized.');
@@ -138,7 +136,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
     if (_selectedExercise == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select an exercise first.')),
+        const SnackBar(content: Text('Select an exercise first.')),
       );
       return;
     }
@@ -147,6 +145,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     try {
       _resetAnalysisState();
       await _cameraController!.startVideoRecording();
+      HapticFeedback.lightImpact();
       if (!mounted) return;
       setState(() {
         _isRecording = true;
@@ -155,188 +154,126 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     } on CameraException catch (e) {
       if (!mounted) return;
       setState(
-        () =>
-            _errorMessage = 'Error starting video recording: ${e.description}',
+        () => _errorMessage = 'Error starting recording: ${e.description}',
       );
     }
   }
 
-  Future<void> _stopVideoRecording() async {
+  Future<void> _stopVideoRecordingAndSave() async {
     if (_cameraController == null || !_cameraController!.value.isRecordingVideo)
       return;
-
     try {
       final XFile file = await _cameraController!.stopVideoRecording();
+      HapticFeedback.selectionClick();
       if (!mounted) return;
+      setState(() => _isRecording = false);
 
-      // Compute score from collected frames
-      if (_selectedExercise != null) {
-        _currentFmsScore = PoseAnalysisUtils.scoreExercise(
-          _selectedExercise!,
-          _poseHistory,
-        );
-      } else {
-        _currentFmsScore = 0;
-      }
-
-      // Save to gallery (optional)
-      final ok = await GallerySaver.saveVideo(
+      final saved = await GallerySaver.saveVideo(
         file.path,
         albumName: 'FMS Recordings',
       );
-      debugPrint(
-        ok == true
-            ? 'Video saved to gallery'
-            : 'Failed to save video to gallery',
-      );
+      if (saved == true) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Video saved to gallery')));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save video to gallery')),
+        );
+      }
 
-      setState(() {
-        _isRecording = false;
-        _capturedVideo = file;
-        _errorMessage = null;
-      });
-
-      _showVideoPreviewAndUploadOption(file);
+      await _finalizeAndSaveSessionScore(); // u Firestore: exercise + score + timestamp
     } on CameraException catch (e) {
       if (!mounted) return;
       setState(
-        () =>
-            _errorMessage = 'Error stopping video recording: ${e.description}',
+        () => _errorMessage = 'Error stopping recording: ${e.description}',
       );
     }
   }
 
-  Future<void> _pickVideoFromGallery() async {
-    final ImagePicker picker = ImagePicker();
-    try {
-      final XFile? video = await picker.pickVideo(source: ImageSource.gallery);
-      if (!mounted) return;
-
-      if (video != null) {
-        // NOTE: we did not collect pose frames for gallery videos.
-        // You can mark these as "Pending" score or run an offline analysis pipeline.
-        _currentFmsScore = 0;
-        setState(() {
-          _capturedVideo = video;
-          _errorMessage = null;
-        });
-        _showVideoPreviewAndUploadOption(video);
-      } else {
-        setState(() => _errorMessage = 'No video selected.');
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'Error picking video: $e');
+  // (Optional) Analiza iz galerije — samo za ocjenjivanje, ne sprema video u history
+  Future<void> _analyzeVideoFromGallery() async {
+    if (_selectedExercise == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select an exercise first.')),
+      );
+      return;
     }
-  }
+    final picker = ImagePicker();
+    final XFile? video = await picker.pickVideo(source: ImageSource.gallery);
+    if (video == null) return;
 
-  void _showVideoPreviewAndUploadOption(XFile videoFile) {
+    await _finalizeAndSaveSessionScore();
     if (!mounted) return;
-    showDialog(
-      context: context,
-      builder:
-          (_) => AlertDialog(
-            title: const Text('Video Captured/Selected'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('File: ${videoFile.path.split('/').last}'),
-                const SizedBox(height: 8),
-                if (_selectedExercise != null)
-                  Text('Exercise: ${exerciseNames[_selectedExercise!]!}'),
-                Text('Score: $_currentFmsScore'),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    _uploadVideo(videoFile);
-                  },
-                  child: const Text('Upload Video'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    setState(() {
-                      _capturedVideo = null;
-                    });
-                    _resetAnalysisState();
-                  },
-                  child: const Text('Retake/Reselect'),
-                ),
-              ],
-            ),
-          ),
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Analyzed video and saved session score')),
     );
   }
 
-  Future<void> _uploadVideo(XFile videoFile) async {
-    final User? currentUser = FirebaseAuth.instance.currentUser;
+  Future<void> _finalizeAndSaveSessionScore() async {
+    if (_selectedExercise != null) {
+      _currentFmsScore = PoseAnalysisUtils.scoreExercise(
+        _selectedExercise!,
+        _poseHistory,
+      );
+    } else {
+      _currentFmsScore = 0;
+    }
 
-    if (currentUser == null) {
-      if (!mounted) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error: No user logged in for upload.')),
+        const SnackBar(content: Text('Error: No user logged in.')),
       );
       return;
     }
 
+    final exerciseName =
+        _selectedExercise != null
+            ? (exerciseNames[_selectedExercise!] ??
+                _selectedExercise.toString())
+            : 'Unknown';
+
+    final session = FMSSessionModel(
+      userId: user.uid,
+      timestamp: DateTime.now(),
+      exercise: exerciseName,
+      rating: _currentFmsScore,
+      notes: '',
+      videoUrl: null, // ne prikazujemo u history
+    );
+
     try {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Uploading ${videoFile.path.split('/').last}...'),
-        ),
-      );
-
-      final storageService = StorageService();
-      final url = await storageService.uploadFMSVideo(
-        videoFile,
-        currentUser.uid,
-        sessionTimestamp: DateTime.now(),
-      );
-
-      final firestoreService = FirestoreService();
-
-      final exerciseName =
-          _selectedExercise != null
-              ? (exerciseNames[_selectedExercise!] ??
-                  _selectedExercise.toString())
-              : 'Unknown';
-
-      final session = FMSSessionModel(
-        userId: currentUser.uid,
-        timestamp: DateTime.now(),
-        videoUrl: url,
-        exercise: exerciseName,
-        rating: _currentFmsScore,
-        notes: 'Recorded via app',
-      );
-
-      final sessionId = await firestoreService.saveFMSession(session);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Saved! Session ID: $sessionId')));
-
-      setState(() {
-        _capturedVideo = null;
-      });
-      _resetAnalysisState();
+      await FirestoreService().saveFMSession(session);
+      _poseHistory.clear();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Operation failed: $e')));
+      ).showSnackBar(SnackBar(content: Text('Failed to save session: $e')));
     }
+  }
+
+  // ---------------- UI ----------------
+  void _selectExerciseFromMenu(ExerciseType choice) {
+    setState(() {
+      _selectedExercise = choice;
+    });
+    _resetAnalysisState();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Top errors
+    final title = 'FMS Capture';
+    final exLabel =
+        _selectedExercise == null
+            ? 'Select exercise'
+            : (exerciseNames[_selectedExercise!] ??
+                _selectedExercise.toString());
+
     if (_errorMessage != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('FMS Capture')),
+        appBar: AppBar(title: Text(title)),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -351,63 +288,49 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return Scaffold(
-        appBar: AppBar(title: const Text('FMS Capture')),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 20),
-              const Text('Initializing camera...'),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: _pickVideoFromGallery,
-                icon: const Icon(Icons.photo_library),
-                label: const Text('Choose Existing Video'),
-              ),
-            ],
-          ),
-        ),
+        appBar: AppBar(title: Text(title)),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('FMS Capture'),
+        title: Text(title),
         actions: [
-          // Exercise selector
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<ExerciseType>(
-                value: _selectedExercise,
-                hint: const Text(
-                  'Select exercise',
-                  style: TextStyle(color: Colors.white),
+          // Exercise selection MENU in toolbar
+          PopupMenuButton<ExerciseType>(
+            tooltip: 'Select exercise',
+            icon: Row(
+              children: [
+                const Icon(Icons.fitness_center),
+                const SizedBox(width: 6),
+                Text(
+                  _selectedExercise == null
+                      ? 'Exercise'
+                      : (exerciseNames[_selectedExercise!] ?? 'Exercise'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-                dropdownColor: Colors.blueGrey.shade700,
-                iconEnabledColor: Colors.white,
-                onChanged: (ExerciseType? ex) {
-                  setState(() {
-                    _selectedExercise = ex;
-                  });
-                  _resetAnalysisState();
-                },
-                items:
-                    ExerciseType.values.map((e) {
-                      return DropdownMenuItem(
-                        value: e,
-                        child: Text(exerciseNames[e] ?? e.toString()),
-                      );
-                    }).toList(),
-              ),
+                const SizedBox(width: 6),
+                const Icon(Icons.arrow_drop_down),
+              ],
             ),
+            onSelected: _selectExerciseFromMenu,
+            itemBuilder: (context) {
+              return ExerciseType.values.map((e) {
+                return PopupMenuItem<ExerciseType>(
+                  value: e,
+                  child: Text(exerciseNames[e] ?? e.toString()),
+                );
+              }).toList();
+            },
           ),
+          const SizedBox(width: 6),
         ],
       ),
       body: Stack(
         children: [
           Positioned.fill(child: CameraPreview(_cameraController!)),
+
           if (_cameraController!.value.isInitialized &&
               _cameraController!.value.previewSize != null)
             Positioned.fill(
@@ -423,6 +346,50 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
                 ),
               ),
             ),
+
+          // Status chip
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.35),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.sports_gymnastics,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      exLabel,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Icon(Icons.star, color: Colors.amber, size: 18),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Score: $_currentFmsScore',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
           // Controls
           Align(
             alignment: Alignment.bottomCenter,
@@ -432,18 +399,26 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  FloatingActionButton(
+                  FilledButton.icon(
                     onPressed:
                         _isRecording
-                            ? _stopVideoRecording
+                            ? _stopVideoRecordingAndSave
                             : _startVideoRecording,
-                    backgroundColor: _isRecording ? Colors.red : Colors.blue,
-                    child: Icon(_isRecording ? Icons.stop : Icons.videocam),
+                    icon: Icon(
+                      _isRecording ? Icons.stop : Icons.fiber_manual_record,
+                    ),
+                    label: Text(_isRecording ? 'Stop & Save' : 'Record'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor:
+                          _isRecording
+                              ? Colors.red
+                              : Theme.of(context).colorScheme.primary,
+                    ),
                   ),
-                  FloatingActionButton(
-                    onPressed: _pickVideoFromGallery,
-                    backgroundColor: Colors.green,
-                    child: const Icon(Icons.photo_library),
+                  OutlinedButton.icon(
+                    onPressed: _analyzeVideoFromGallery,
+                    icon: const Icon(Icons.video_library),
+                    label: const Text('Analyze from Gallery'),
                   ),
                 ],
               ),
