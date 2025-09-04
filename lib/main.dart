@@ -3,14 +3,12 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:camera/camera.dart';
 
-import 'package:flutter_fms/screens/app_shell.dart';
+import 'package:flutter_fms/screens/auth/auth_gate.dart'; // <-- NOVO
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
   final cameras = await availableCameras();
-
   runApp(MyApp(cameras: cameras));
 }
 
@@ -29,7 +27,6 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'FMS Trainer',
       theme: base.copyWith(
-        // Bez GoogleFonts: koristi default textTheme
         appBarTheme: base.appBarTheme.copyWith(
           centerTitle: true,
           titleTextStyle: TextStyle(
@@ -38,7 +35,6 @@ class MyApp extends StatelessWidget {
             color: base.colorScheme.onSurface,
           ),
         ),
-        // Kopiramo postojeći cardTheme (izbjegava “CardThemeData” konflikt)
         cardTheme: base.cardTheme.copyWith(
           elevation: 2,
           shape: RoundedRectangleBorder(
@@ -49,7 +45,7 @@ class MyApp extends StatelessWidget {
           style: FilledButton.styleFrom(shape: const StadiumBorder()),
         ),
       ),
-      home: AppShell(cameras: cameras),
+      home: AuthGate(cameras: cameras), // <-- UMJESTO AppShell
     );
   }
 }

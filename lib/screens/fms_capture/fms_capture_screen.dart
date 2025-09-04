@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // 👈 Logout
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image_picker/image_picker.dart';
@@ -48,6 +48,9 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
   @override
   void dispose() {
+    try {
+      _cameraController?.stopImageStream();
+    } catch (_) {}
     _cameraController?.dispose();
     _poseDetector.close();
     super.dispose();
@@ -64,7 +67,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       _cameraController = CameraController(
         cam,
         ResolutionPreset.medium,
-        enableAudio: true, // snimamo video koji ide u galeriju
+        enableAudio: true,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
       await _cameraController!.initialize();
@@ -182,7 +185,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         );
       }
 
-      await _finalizeAndSaveSessionScore(); // u Firestore: exercise + score + timestamp
+      await _finalizeAndSaveSessionScore(); // Firestore: exercise + score + timestamp (no video)
     } on CameraException catch (e) {
       if (!mounted) return;
       setState(
@@ -191,7 +194,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
-  // (Optional) Analiza iz galerije — samo za ocjenjivanje, ne sprema video u history
+  // Analyze from gallery (no video saved to Firestore, only score metadata)
   Future<void> _analyzeVideoFromGallery() async {
     if (_selectedExercise == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -240,7 +243,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       exercise: exerciseName,
       rating: _currentFmsScore,
       notes: '',
-      videoUrl: null, // ne prikazujemo u history
+      videoUrl: null,
     );
 
     try {
@@ -254,7 +257,6 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
-  // ---------------- UI ----------------
   void _selectExerciseFromMenu(ExerciseType choice) {
     setState(() {
       _selectedExercise = choice;
@@ -264,7 +266,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final title = 'FMS Capture';
+    const title = 'FMS Capture';
     final exLabel =
         _selectedExercise == null
             ? 'Select exercise'
@@ -273,7 +275,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     if (_errorMessage != null) {
       return Scaffold(
-        appBar: AppBar(title: Text(title)),
+        appBar: AppBar(title: const Text(title)),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -288,16 +290,16 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return Scaffold(
-        appBar: AppBar(title: Text(title)),
+        appBar: AppBar(title: const Text(title)),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(title),
+        title: const Text(title),
         actions: [
-          // Exercise selection MENU in toolbar
+          // Exercise selection MENU in toolbar (ostaje kao što si imala)
           PopupMenuButton<ExerciseType>(
             tooltip: 'Select exercise',
             icon: Row(
@@ -324,6 +326,15 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
               }).toList();
             },
           ),
+          const SizedBox(width: 8),
+          // 👇 Logout gumb – dodan
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+            },
+          ),
           const SizedBox(width: 6),
         ],
       ),
@@ -347,7 +358,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
               ),
             ),
 
-          // Status chip
+          // Status chip (naziv vježbe + score) – ostaje
           SafeArea(
             child: Align(
               alignment: Alignment.topCenter,
@@ -390,7 +401,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
             ),
           ),
 
-          // Controls
+          // Controls (ostaju)
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(

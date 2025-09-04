@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // 👈 Logout
 import 'package:intl/intl.dart';
 import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
-import 'package:flutter_fms/utils/pose_analysis_utils.dart';
+import 'package:flutter_fms/utils/pose_analysis_utils.dart'; // for ExerciseType + exerciseNames
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -179,7 +180,20 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('FMS Session History')),
+      appBar: AppBar(
+        title: const Text('FMS Session History'),
+        centerTitle: true,
+        actions: [
+          // 👇 Logout gumb – dodan
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
           _buildHeader(context),
