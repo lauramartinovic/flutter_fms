@@ -1,9 +1,11 @@
+// lib/screens/history/history_screen.dart
+
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // 👈 Logout
 import 'package:intl/intl.dart';
 import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
-import 'package:flutter_fms/utils/pose_analysis_utils.dart'; // for ExerciseType + exerciseNames
+import 'package:flutter_fms/utils/pose_analysis_utils.dart';
+import 'package:flutter_fms/screens/home/edit_profile_screen.dart'; // Edit profile
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -22,6 +24,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   String _formatTs(DateTime ts) {
     if (ts.millisecondsSinceEpoch == 0) return 'Syncing…';
     return _dateFmt.format(ts.toLocal());
+    // Ako koristiš serverTimestamp, u prvom trenutku može biti 0 dok se ne sync-a.
   }
 
   List<FMSSessionModel> _applyFilters(List<FMSSessionModel> items) {
@@ -63,11 +66,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
                 child: const Text('Delete'),
               ),
             ],
           ),
     );
+
     if (ok == true && s.id != null) {
       await _firestore.deleteFMSSession(s.id!);
       if (context.mounted) {
@@ -139,8 +147,111 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
+  // ------- FEATURES UI HELPERS -------
+
+  String _prettyNumber(dynamic v) {
+    if (v is num) {
+      // za čitljivost: 1 decimal ako ima smisla
+      final n = v.toDouble();
+      return (n % 1 == 0) ? n.toStringAsFixed(0) : n.toStringAsFixed(1);
+    }
+    return '$v';
+  }
+
+  Widget _buildFeatures(Map<String, dynamic>? features) {
+    if (features == null || features.isEmpty) {
+      return const Text(
+        'No features captured.',
+        style: TextStyle(color: Colors.grey),
+      );
+    }
+
+    // Podijeli u dvije kolone za urednost ako ima više metrika
+    final entries = features.entries.toList();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth > 420;
+        final children =
+            entries.map((e) {
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    child: Text(
+                      e.key,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    _prettyNumber(e.value),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ],
+              );
+            }).toList();
+
+        if (!isWide) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...children.map(
+                (row) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: row,
+                ),
+              ),
+            ],
+          );
+        }
+
+        // Wide: dvokolonski prikaz
+        final half = (children.length / 2).ceil();
+        final left = children.take(half).toList();
+        final right = children.skip(half).toList();
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                children:
+                    left
+                        .map(
+                          (row) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: row,
+                          ),
+                        )
+                        .toList(),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                children:
+                    right
+                        .map(
+                          (row) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: row,
+                          ),
+                        )
+                        .toList(),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildTile(BuildContext context, FMSSessionModel s) {
     final dateStr = _formatTs(s.timestamp);
+
     return Dismissible(
       key: ValueKey(
         s.id ?? '${s.userId}_${s.timestamp.millisecondsSinceEpoch}',
@@ -158,20 +269,37 @@ class _HistoryScreenState extends State<HistoryScreen> {
         child: const Icon(Icons.delete, color: Colors.white),
       ),
       confirmDismiss: (_) => _confirmDelete(context, s),
+
+      // ExpansionTile za prikaz značajki
       child: Card(
         margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
         elevation: 3,
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            vertical: 10,
-            horizontal: 14,
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 14),
+          childrenPadding: const EdgeInsets.symmetric(
+            vertical: 8,
+            horizontal: 16,
           ),
           title: Text(
             s.exercise,
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            style: const TextStyle(fontWeight: FontWeight.w700),
           ),
           subtitle: Text('$dateStr  •  Score: ${s.rating}'),
-          onTap: null,
+          trailing: const Icon(Icons.expand_more),
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Features',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildFeatures(s.features), // <<<<<<<<<<<< prikaz mape
+            const SizedBox(height: 8),
+          ],
         ),
       ),
     );
@@ -184,12 +312,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
         title: const Text('FMS Session History'),
         centerTitle: true,
         actions: [
-          // 👇 Logout gumb – dodan
           IconButton(
-            tooltip: 'Logout',
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
+            tooltip: 'Edit Profile',
+            icon: const Icon(Icons.account_circle),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+              );
             },
           ),
         ],

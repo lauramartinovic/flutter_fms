@@ -6,9 +6,9 @@ class UserProfileModel {
   final String displayName;
   final DateTime createdAt;
 
-  // NOVO – opcionalni profil podaci
-  final int? age; // godina
-  final String? gender; // "male", "female", "other" (po dogovoru)
+  /// NOVO
+  final int? age; // godine
+  final String? sex; // 'male' | 'female' | 'other' (može i localized)
   final double? heightCm; // visina u cm
   final double? weightKg; // težina u kg
 
@@ -18,7 +18,7 @@ class UserProfileModel {
     required this.displayName,
     required this.createdAt,
     this.age,
-    this.gender,
+    this.sex,
     this.heightCm,
     this.weightKg,
   });
@@ -30,25 +30,35 @@ class UserProfileModel {
       email: (data['email'] ?? '') as String,
       displayName: (data['displayName'] ?? '') as String,
       createdAt:
-          (data['createdAt'] as Timestamp?)?.toDate() ??
-          DateTime.fromMillisecondsSinceEpoch(0),
-      age: (data['age'] as num?)?.toInt(),
-      gender: data['gender'] as String?,
-      heightCm: (data['heightCm'] as num?)?.toDouble(),
-      weightKg: (data['weightKg'] as num?)?.toDouble(),
+          (data['createdAt'] is Timestamp)
+              ? (data['createdAt'] as Timestamp).toDate()
+              : DateTime.fromMillisecondsSinceEpoch(0),
+
+      age:
+          (data['age'] is int)
+              ? data['age'] as int
+              : (data['age'] is num ? (data['age'] as num).toInt() : null),
+      sex: data['sex'] as String?,
+      heightCm:
+          (data['heightCm'] is num)
+              ? (data['heightCm'] as num).toDouble()
+              : null,
+      weightKg:
+          (data['weightKg'] is num)
+              ? (data['weightKg'] as num).toDouble()
+              : null,
     );
   }
 
   Map<String, dynamic> toMap() {
-    final map = <String, dynamic>{
+    return {
       'email': email,
       'displayName': displayName,
       'createdAt': Timestamp.fromDate(createdAt),
+      if (age != null) 'age': age,
+      if (sex != null) 'sex': sex,
+      if (heightCm != null) 'heightCm': heightCm,
+      if (weightKg != null) 'weightKg': weightKg,
     };
-    if (age != null) map['age'] = age;
-    if (gender != null) map['gender'] = gender;
-    if (heightCm != null) map['heightCm'] = heightCm;
-    if (weightKg != null) map['weightKg'] = weightKg;
-    return map;
   }
 }

@@ -9,79 +9,86 @@ class FirestoreService {
   // -----------------------------
   // User Profile
   // -----------------------------
+
+  /// Kreira ili ažurira profil (merge) – sada podržava i demografske podatke.
   Future<void> createUserProfile({
     required String uid,
     required String email,
     String? displayName,
     int? age,
-    String? gender,
+    String? sex,
     double? heightCm,
     double? weightKg,
   }) async {
     try {
-      final doc = _firestore.collection('users').doc(uid);
-      final data = <String, dynamic>{
+      final userRef = _firestore.collection('users').doc(uid);
+      await userRef.set({
         'email': email,
         'displayName': displayName ?? email.split('@').first,
         'createdAt': FieldValue.serverTimestamp(),
-      };
-      if (age != null) data['age'] = age;
-      if (gender != null) data['gender'] = gender;
-      if (heightCm != null) data['heightCm'] = heightCm;
-      if (weightKg != null) data['weightKg'] = weightKg;
-
-      await doc.set(data, SetOptions(merge: true));
+        if (age != null) 'age': age,
+        if (sex != null) 'sex': sex,
+        if (heightCm != null) 'heightCm': heightCm,
+        if (weightKg != null) 'weightKg': weightKg,
+      }, SetOptions(merge: true));
     } catch (e) {
       throw Exception('Failed to create/update user profile: $e');
     }
   }
 
-  /// Partial update profila – proslijedi samo polja koja želiš mijenjati
-  Future<void> updateUserProfileFields({
-    required String uid,
-    required Map<String, dynamic> fields,
-  }) async {
-    try {
-      await _firestore.collection('users').doc(uid).update(fields);
-    } on FirebaseException catch (e) {
-      throw Exception('Failed to update profile: ${e.message}');
-    }
-  }
-
+  /// Dohvat profila (stream)
   Stream<UserProfileModel?> getUserProfile(String uid) {
     return _firestore.collection('users').doc(uid).snapshots().map((doc) {
-      if (!doc.exists) return null;
-      return UserProfileModel.fromFirestore(doc);
+      if (doc.exists) {
+        return UserProfileModel.fromFirestore(doc);
+      }
+      return null;
     });
   }
 
+  /// Ažuriranje samo odabranih polja profila (npr. s Edit Profile ekrana)
+  Future<void> updateUserProfile(
+    String uid,
+    Map<String, dynamic> updates,
+  ) async {
+    try {
+      await _firestore
+          .collection('users')
+          .doc(uid)
+          .set(updates, SetOptions(merge: true));
+    } catch (e) {
+      throw Exception('Failed to update profile: $e');
+    }
+  }
+
   // -----------------------------
-  // FMS Sessions
+  // FMS Session
   // -----------------------------
   Future<String> saveFMSession(FMSSessionModel session) async {
     try {
       final data =
           session.toMap()..['timestamp'] = FieldValue.serverTimestamp();
-      final ref = await _firestore.collection('fms_sessions').add(data);
-      return ref.id;
+      final docRef = await _firestore.collection('fms_sessions').add(data);
+      return docRef.id;
     } on FirebaseException catch (e) {
       throw Exception('Failed to save FMS session: ${e.message}');
     } catch (e) {
-      throw Exception('Unexpected error saving session: $e');
+      throw Exception(
+        'An unexpected error occurred while saving FMS session: $e',
+      );
     }
   }
 
   Stream<List<FMSSessionModel>> getFMSSessionsForCurrentUser() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return Stream.value([]);
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return Stream.value([]);
     return _firestore
         .collection('fms_sessions')
-        .where('userId', isEqualTo: user.uid)
+        .where('userId', isEqualTo: currentUser.uid)
         .orderBy('timestamp', descending: true)
         .snapshots()
         .map(
-          (snap) =>
-              snap.docs.map((d) => FMSSessionModel.fromFirestore(d)).toList(),
+          (s) => s.docs.map((d) => FMSSessionModel.fromFirestore(d)).toList(),
         );
   }
 
@@ -92,8 +99,7 @@ class FirestoreService {
         .orderBy('timestamp', descending: true)
         .snapshots()
         .map(
-          (snap) =>
-              snap.docs.map((d) => FMSSessionModel.fromFirestore(d)).toList(),
+          (s) => s.docs.map((d) => FMSSessionModel.fromFirestore(d)).toList(),
         );
   }
 

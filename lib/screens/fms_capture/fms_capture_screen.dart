@@ -215,14 +215,17 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   }
 
   Future<void> _finalizeAndSaveSessionScore() async {
-    if (_selectedExercise != null) {
-      _currentFmsScore = PoseAnalysisUtils.scoreExercise(
-        _selectedExercise!,
-        _poseHistory,
-      );
-    } else {
+    if (_selectedExercise == null) {
       _currentFmsScore = 0;
     }
+
+    // Compute score + features from captured pose frames
+    final result = PoseAnalysisUtils.analyze(
+      _selectedExercise ?? ExerciseType.overheadSquat,
+      _poseHistory,
+    );
+    _currentFmsScore = result.score;
+    final features = result.features;
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -245,6 +248,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       rating: _currentFmsScore,
       notes: '',
       videoUrl: null, // history doesn’t show video
+      features: features,
     );
 
     try {

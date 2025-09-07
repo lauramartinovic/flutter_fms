@@ -1,49 +1,57 @@
+// android/app/build.gradle.kts
+
 plugins {
     id("com.android.application")
-    // START: FlutterFire Configuration
-    id("com.google.gms.google-services")
-    // END: FlutterFire Configuration
-    id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id("dev.flutter.flutter-gradle-plugin")
+    id("org.jetbrains.kotlin.android")         // umjesto "kotlin-android"
+    id("com.google.gms.google-services")       // Firebase
+    id("dev.flutter.flutter-gradle-plugin")    // Flutter plugin (mora nakon Android/Kotlin)
 }
 
 android {
-    namespace = "com.example.flutter_fms"
-    compileSdk = flutter.compileSdkVersion
-    // CHANGE 1: Specify the exact NDK version required by Firebase
-    ndkVersion = "27.0.12077973" // <--- CHANGED THIS LINE
+    namespace = "com.example.flutter_fms"      // <-- promijeni po potrebi
+    compileSdk = 34
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
-    }
+    // OVO TI NE TREBA osim ako baš moraš fiksirati NDK zbog nekog plugina:
+    // ndkVersion = "27.0.12077973"
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.flutter_fms"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // CHANGE 2: Specify the minimum SDK version required by Firebase
-        minSdkVersion flutter.minSdkVersion // <--- CHANGED THIS LINE
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        applicationId = "com.example.flutter_fms"   // <-- promijeni po potrebi
+        minSdk = 21
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0.0"
+
+        multiDexEnabled = true
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Stavi svoj release keystore ako ga imaš:
+            // signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
+        debug {
+            // po želji
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
     }
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("androidx.multidex:multidex:2.0.1")
 }
