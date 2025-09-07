@@ -1,0 +1,53 @@
+plugins {
+  id "com.android.application"
+  id "org.jetbrains.kotlin.android"
+  id "dev.flutter.flutter-gradle-plugin"
+  id "com.google.gms.google-services"
+}
+
+android {
+  namespace "com.example.flutter_fms"
+
+  compileSdk 36
+
+  defaultConfig {
+    applicationId "com.example.flutter_fms"
+    minSdkVersion flutter.minSdkVersion               // ML Kit i CameraX su OK s 21+
+    targetSdk 34
+    versionCode 1
+    versionName "1.0.0"
+
+    multiDexEnabled true
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  buildTypes {
+    release {
+      // TODO: zamijeni pravim signingConfig za Play Store
+      signingConfig signingConfigs.debug
+      minifyEnabled false
+      shrinkResources false
+      proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+    }
+  }
+
+  packagingOptions {
+    resources {
+      excludes += ["META-INF/*"]
+    }
+  }
+}
+
+dependencies {
+  implementation "androidx.multidex:multidex:2.0.1"
+  // Ništa dodatno za ML Kit – flutter plugin `google_mlkit_pose_detection`
+  // sam povlači potrebne ovisnosti.
+}

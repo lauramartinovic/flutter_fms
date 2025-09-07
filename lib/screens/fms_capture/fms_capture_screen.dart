@@ -8,7 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:gallery_saver/gallery_saver.dart';
+import 'package:gal/gal.dart';
 
 import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
@@ -34,7 +34,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   final List<Pose> _poseHistory = [];
 
   final PoseDetector _poseDetector = PoseDetector(
-    options: PoseDetectorOptions(),
+    options: PoseDetectorOptions(mode: PoseDetectionMode.stream),
   );
   bool _isDetecting = false;
   List<Pose> _detectedPoses = [];
@@ -171,15 +171,14 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       if (!mounted) return;
       setState(() => _isRecording = false);
 
-      final saved = await GallerySaver.saveVideo(
-        file.path,
-        albumName: 'FMS Recordings',
-      );
-      if (saved == true) {
+      try {
+        await Gal.putVideo(file.path, album: 'FMS Recordings');
+        if (!mounted) return;
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Video saved to gallery')));
-      } else {
+      } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to save video to gallery')),
         );
