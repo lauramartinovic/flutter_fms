@@ -1,37 +1,43 @@
 plugins {
   id "com.android.application"
   id "org.jetbrains.kotlin.android"
-  id "dev.flutter.flutter-gradle-plugin"
   id "com.google.gms.google-services"
+  id "dev.flutter.flutter-gradle-plugin"
 }
 
 android {
   namespace "com.example.flutter_fms"
 
-  compileSdk 36
+  // Match your plugins’ requirements (camera, mlkit, etc.)
+  compileSdkVersion 36
 
   defaultConfig {
     applicationId "com.example.flutter_fms"
-    minSdkVersion flutter.minSdkVersion               // ML Kit i CameraX su OK s 21+
-    targetSdk 34
+
+    // Use a fixed number OR read from local.properties if you prefer
+    minSdkVersion flutter.minSdkVersion
+    targetSdkVersion 34
+
     versionCode 1
     versionName "1.0.0"
 
     multiDexEnabled true
   }
 
+  // If you need a specific NDK version (ML Kit often benefits from a pinned one)
+  ndkVersion "27.0.12077973"
+
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
   }
-
   kotlinOptions {
     jvmTarget = "17"
   }
 
   buildTypes {
     release {
-      // TODO: zamijeni pravim signingConfig za Play Store
+      // Replace with your real signingConfig before publishing
       signingConfig signingConfigs.debug
       minifyEnabled false
       shrinkResources false
@@ -43,11 +49,15 @@ android {
     resources {
       excludes += ["META-INF/*"]
     }
+    // Helps avoid native .so conflicts on some devices
+    jniLibs {
+      useLegacyPackaging true
+    }
+    // Common native dup fix
+    pickFirsts += ["**/libc++_shared.so"]
   }
 }
 
 dependencies {
   implementation "androidx.multidex:multidex:2.0.1"
-  // Ništa dodatno za ML Kit – flutter plugin `google_mlkit_pose_detection`
-  // sam povlači potrebne ovisnosti.
 }
