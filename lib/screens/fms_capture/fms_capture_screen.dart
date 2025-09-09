@@ -5,7 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:gal/gal.dart';
@@ -78,9 +79,11 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         cam,
         ResolutionPreset.medium,
         enableAudio: true, // for video recording
-        imageFormatGroup: defaultTargetPlatform == TargetPlatform.iOS
-            ? ImageFormatGroup.bgra8888 // iOS
-            : ImageFormatGroup.yuv420,  // Android
+        imageFormatGroup:
+            defaultTargetPlatform == TargetPlatform.iOS
+                ? ImageFormatGroup
+                    .bgra8888 // iOS
+                : ImageFormatGroup.yuv420, // Android
       );
       await _cameraController!.initialize();
 
@@ -92,23 +95,27 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         if (_isDetecting) return;
         _isDetecting = true;
 
-        final rotation = InputImageRotationValue.fromRawValue(
+        final rotation =
+            InputImageRotationValue.fromRawValue(
               _cameraController!.description.sensorOrientation,
-            ) ?? InputImageRotation.rotation0deg;
+            ) ??
+            InputImageRotation.rotation0deg;
 
         _processCameraImage(
-          image,
-          rotation,
-          _cameraController!.description.lensDirection,
-        ).then((_) {
-          if (_isRecording && _detectedPoses.isNotEmpty) {
-            _poseHistory.add(_detectedPoses.first);
-          }
-          _isDetecting = false;
-        }).catchError((e) {
-          _isDetecting = false;
-          debugPrint('Pose detection error: $e');
-        });
+              image,
+              rotation,
+              _cameraController!.description.lensDirection,
+            )
+            .then((_) {
+              if (_isRecording && _detectedPoses.isNotEmpty) {
+                _poseHistory.add(_detectedPoses.first);
+              }
+              _isDetecting = false;
+            })
+            .catchError((e) {
+              _isDetecting = false;
+              debugPrint('Pose detection error: $e');
+            });
       });
 
       if (mounted) setState(() => _errorMessage = null);
@@ -127,38 +134,56 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     CameraLensDirection cameraLensDirection,
   ) async {
     try {
-      // ===== Build InputImage bytes + metadata =====
-      // For Android, ML Kit now expects NV21; for iOS, BGRA8888.
-      // Concatenate all planes (works with the Flutter camera YUV output).
-      final WriteBuffer allBytes = WriteBuffer();
-      for (final Plane plane in image.planes) {
-        allBytes.putUint8List(plane.bytes);
-      }
-      final Uint8List bytes = allBytes.done().buffer.asUint8List();
+      final inputImage;
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        // Correctly handle YUV data for Android
+        // This is a common pattern for converting CameraImage planes to a format
+        // that ML Kit's native Android API can understand.
+        final planes = image.planes;
+        // You must use a supported format like NV21. The planes need to be combined
+        // into a single Uint8List buffer with the correct offset.
+        final WriteBuffer allBytes = WriteBuffer();
+        for (final Plane plane in planes) {
+          allBytes.putUint8List(plane.bytes);
+        }
+        final bytes = allBytes.done().buffer.asUint8List();
 
-      final isIOS = defaultTargetPlatform == TargetPlatform.iOS;
-      final inputFormat =
-          isIOS ? InputImageFormat.bgra8888 : InputImageFormat.nv21;
-
-      final inputImage = InputImage.fromBytes(
-        bytes: bytes,
-        metadata: InputImageMetadata(
+        final InputImageMetadata metadata = InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
           rotation: rotation,
-          format: inputFormat,
-          // bytesPerRow is required; for Y (first plane) on Android and BGRA on iOS.
+          format: InputImageFormat.nv21,
+          bytesPerRow:
+              image.planes[0].bytesPerRow, // Use bytesPerRow from the Y plane
+        );
+
+        inputImage = InputImage.fromBytes(bytes: bytes, metadata: metadata);
+      } else {
+        // This part for iOS is mostly correct.
+        final WriteBuffer allBytes = WriteBuffer();
+        for (final Plane plane in image.planes) {
+          allBytes.putUint8List(plane.bytes);
+        }
+        final bytes = allBytes.done().buffer.asUint8List();
+        final inputImageFormat = InputImageFormat.bgra8888;
+
+        final inputImageMetadata = InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: inputImageFormat,
           bytesPerRow: image.planes.first.bytesPerRow,
-        ),
-      );
+        );
+
+        inputImage = InputImage.fromBytes(
+          bytes: bytes,
+          metadata: inputImageMetadata,
+        );
+      }
 
       // ===== Run detector =====
       final List<Pose> poses = await _poseDetector.processImage(inputImage);
 
       if (!mounted) return;
       setState(() => _detectedPoses = poses);
-
-      // Optional debug:
-      // debugPrint('Detected ${poses.length} poses (fmt=$inputFormat)');
     } catch (e) {
       debugPrint('Pose detection error during processing: $e');
       if (!mounted) return;
@@ -198,7 +223,8 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   }
 
   Future<void> _stopVideoRecordingAndSave() async {
-    if (_cameraController == null || !_cameraController!.value.isRecordingVideo) return;
+    if (_cameraController == null || !_cameraController!.value.isRecordingVideo)
+      return;
     try {
       final XFile file = await _cameraController!.stopVideoRecording();
       HapticFeedback.selectionClick();
@@ -213,9 +239,9 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         }
         await Gal.putVideo(file.path, album: 'FMS Recordings');
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Video saved to gallery')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Video saved to gallery')));
       } catch (_) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -284,8 +310,9 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       _poseHistory.clear();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Failed to save session: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to save session: $e')));
     }
   }
 
@@ -302,17 +329,20 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       await AuthService().signOut();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Sign out failed: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Sign out failed: $e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     const title = 'FMS Capture';
-    final exLabel = _selectedExercise == null
-        ? 'Select exercise'
-        : (exerciseNames[_selectedExercise!] ?? _selectedExercise.toString());
+    final exLabel =
+        _selectedExercise == null
+            ? 'Select exercise'
+            : (exerciseNames[_selectedExercise!] ??
+                _selectedExercise.toString());
 
     if (_errorMessage != null) {
       return Scaffold(
@@ -355,12 +385,15 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
 
     // Map preview + orientation to overlay
-    final rotation = InputImageRotationValue.fromRawValue(
+    final rotation =
+        InputImageRotationValue.fromRawValue(
           _cameraController!.description.sensorOrientation,
-        ) ?? InputImageRotation.rotation0deg;
+        ) ??
+        InputImageRotation.rotation0deg;
 
     final Size preview = _cameraController!.value.previewSize!;
-    final bool swap = rotation == InputImageRotation.rotation90deg ||
+    final bool swap =
+        rotation == InputImageRotation.rotation90deg ||
         rotation == InputImageRotation.rotation270deg;
     final Size imageSizeUpright =
         swap ? Size(preview.height, preview.width) : preview;
@@ -427,7 +460,10 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
               alignment: Alignment.topCenter,
               child: Container(
                 margin: const EdgeInsets.only(top: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.35),
                   borderRadius: BorderRadius.circular(12),
@@ -435,13 +471,18 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.sports_gymnastics,
-                        color: Colors.white, size: 18),
+                    const Icon(
+                      Icons.sports_gymnastics,
+                      color: Colors.white,
+                      size: 18,
+                    ),
                     const SizedBox(width: 6),
                     Text(
                       exLabel,
                       style: const TextStyle(
-                          color: Colors.white, fontWeight: FontWeight.w600),
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(width: 12),
                     const Icon(Icons.star, color: Colors.amber, size: 18),
@@ -466,16 +507,19 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   FilledButton.icon(
-                    onPressed: _isRecording
-                        ? _stopVideoRecordingAndSave
-                        : _startVideoRecording,
+                    onPressed:
+                        _isRecording
+                            ? _stopVideoRecordingAndSave
+                            : _startVideoRecording,
                     icon: Icon(
-                        _isRecording ? Icons.stop : Icons.fiber_manual_record),
+                      _isRecording ? Icons.stop : Icons.fiber_manual_record,
+                    ),
                     label: Text(_isRecording ? 'Stop & Save' : 'Record'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: _isRecording
-                          ? Colors.red
-                          : Theme.of(context).colorScheme.primary,
+                      backgroundColor:
+                          _isRecording
+                              ? Colors.red
+                              : Theme.of(context).colorScheme.primary,
                     ),
                   ),
                   OutlinedButton.icon(
