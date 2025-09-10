@@ -4,8 +4,6 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 /// Keep only 3 exercises (as agreed)
 enum ExerciseType { overheadSquat, standardPushUp, forwardLunge }
 
-enum _RepState { up, down }
-
 final Map<ExerciseType, String> exerciseNames = {
   ExerciseType.overheadSquat: 'Overhead Squat',
   ExerciseType.standardPushUp: 'Push-Up',
@@ -36,7 +34,25 @@ class PoseAnalysisUtils {
     return deg;
   }
 
-  /// Threshold crossing helper -> rough reps count from an angle time series.
+  /// Checks if the user is moving down based on the `smallerIsDown` flag and thresholds.
+  static bool _isMovingDown(
+    double angle, {
+    required double downThresh,
+    required bool smallerIsDown,
+  }) {
+    return smallerIsDown ? angle <= downThresh : angle >= downThresh;
+  }
+
+  /// Checks if the user is moving up based on the `smallerIsDown` flag and thresholds.
+  static bool _isMovingUp(
+    double angle, {
+    required double upThresh,
+    required bool smallerIsDown,
+  }) {
+    return smallerIsDown ? angle >= upThresh : angle <= upThresh;
+  }
+
+  /// A more robust threshold-crossing helper for rep counting.
   static int _countReps(
     List<double> series, {
     required double downThresh, // angle considered "at bottom" (or up)
@@ -44,24 +60,24 @@ class PoseAnalysisUtils {
     bool smallerIsDown = false, // whether going smaller angle means "down"
   }) {
     if (series.isEmpty) return 0;
-
-    // renamed to avoid clash with Flutter's State<T>
-
-    _RepState? state;
     int reps = 0;
+    bool reachedDown = false;
 
     for (final v in series) {
-      final isDown = smallerIsDown ? (v <= downThresh) : (v >= downThresh);
-      final isUp = smallerIsDown ? (v >= upThresh) : (v <= upThresh);
+      // Transition from UP to DOWN
+      if (_isMovingDown(
+        v,
+        downThresh: downThresh,
+        smallerIsDown: smallerIsDown,
+      )) {
+        reachedDown = true;
+      }
 
-      state ??= isUp ? _RepState.up : (isDown ? _RepState.down : null);
-      if (state == null) continue;
-
-      if (state == _RepState.up && isDown) {
-        state = _RepState.down;
-      } else if (state == _RepState.down && isUp) {
-        state = _RepState.up;
-        reps++; // completed one full cycle
+      // Transition from DOWN to UP (completion of one rep)
+      if (reachedDown &&
+          _isMovingUp(v, upThresh: upThresh, smallerIsDown: smallerIsDown)) {
+        reps++;
+        reachedDown = false;
       }
     }
     return reps;
@@ -78,8 +94,6 @@ class PoseAnalysisUtils {
         return _analyzeLunge(frames);
     }
   }
-
-  /// Threshold crossing helper -> rough reps count from an angle time series.
 
   // ---------- Overhead Squat ----------
   // Heuristics closer to FMS (still 2D):
@@ -298,35 +312,58 @@ class PoseAnalysisUtils {
       return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
     }
 
-    final frontKneeSeries =
-        <double>[]; // knee angle (hip-knee-ankle) of the "front" leg
+    final frontKneeSeries = <double>[];
     final torsoSeries = <double>[];
 
+    // Determine the direction of the lunge from the first frame
+    final firstPose = frames.firstWhere(
+      (p) =>
+          p.landmarks[PoseLandmarkType.leftHip] != null &&
+          p.landmarks[PoseLandmarkType.rightHip] != null &&
+          p.landmarks[PoseLandmarkType.leftKnee] != null &&
+          p.landmarks[PoseLandmarkType.rightKnee] != null,
+      orElse: () => null!,
+    );
+
+    if (firstPose == null) {
+      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
+    }
+
+    final lHip = firstPose.landmarks[PoseLandmarkType.leftHip]!;
+    final rHip = firstPose.landmarks[PoseLandmarkType.rightHip]!;
+    final lKnee = firstPose.landmarks[PoseLandmarkType.leftKnee]!;
+    final rKnee = firstPose.landmarks[PoseLandmarkType.rightKnee]!;
+
+    // A more reliable method is to check which knee is forward relative to the hip
+    final initialIsLeftForward =
+        (lKnee.x - lHip.x).abs() > (rKnee.x - rHip.x).abs();
+
     for (final p in frames) {
-      final ls = p.landmarks[PoseLandmarkType.leftShoulder];
-      final rs = p.landmarks[PoseLandmarkType.rightShoulder];
       final lh = p.landmarks[PoseLandmarkType.leftHip];
       final rh = p.landmarks[PoseLandmarkType.rightHip];
       final lk = p.landmarks[PoseLandmarkType.leftKnee];
       final rk = p.landmarks[PoseLandmarkType.rightKnee];
       final la = p.landmarks[PoseLandmarkType.leftAnkle];
       final ra = p.landmarks[PoseLandmarkType.rightAnkle];
+      final ls = p.landmarks[PoseLandmarkType.leftShoulder];
+      final rs = p.landmarks[PoseLandmarkType.rightShoulder];
 
       if ([ls, rs, lh, rh, lk, rk, la, ra].any((e) => e == null)) {
         continue;
       }
 
-      final leftKnee = angle(lh!, lk!, la!);
-      final rightKnee = angle(rh!, rk!, ra!);
+      // Dynamically select the front leg for this frame
+      final useLeftAsFront = (lk!.x - lh!.x).abs() > (rk!.x - rh!.x).abs();
 
-      // Roughly pick "front" knee by smaller y (more toward camera/top depends on view; heuristic)
-      final useLeftAsFront = lk!.y < rk!.y;
-      final frontKnee = useLeftAsFront ? leftKnee : rightKnee;
-      frontKneeSeries.add(frontKnee);
+      final frontKneeAngle =
+          useLeftAsFront ? angle(lh!, lk!, la!) : angle(rh!, rk!, ra!);
 
-      final lTorso = angle(ls!, lh, lk);
-      final rTorso = angle(rs!, rh, rk);
-      torsoSeries.add((lTorso + rTorso) / 2);
+      // Calculate torso angle using the landmarks of the front leg
+      final torsoAngle =
+          useLeftAsFront ? angle(ls!, lh, lk) : angle(rs!, rh, rk);
+
+      frontKneeSeries.add(frontKneeAngle);
+      torsoSeries.add(torsoAngle);
     }
 
     if (frontKneeSeries.isEmpty) {
@@ -344,9 +381,8 @@ class PoseAnalysisUtils {
     final reps = _countReps(
       frontKneeSeries,
       downThresh: 95,
-      upThresh: 120, // go down near 90, back to ~>120
-      smallerIsDown:
-          (false), // larger angle ~ straighter; but we used min closeness to 90 too
+      upThresh: 120,
+      smallerIsDown: true,
     );
 
     final features = {

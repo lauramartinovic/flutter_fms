@@ -76,3 +76,4 @@ ios/Runner.xcodeproj/xcuserdata/
 # ---------------------------------------
 app.*.symbols
 app.*.map.json
+*.html

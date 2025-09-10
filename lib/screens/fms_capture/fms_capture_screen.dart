@@ -1,5 +1,6 @@
 // lib/screens/fms_capture/fms_capture_screen.dart
-import 'dart:typed_data';
+
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -9,12 +10,17 @@ import 'package:flutter/foundation.dart'
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:gal/gal.dart';
+import 'dart:io';
 
 import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
 import 'package:flutter_fms/widgets/pose_painter.dart';
 import 'package:flutter_fms/utils/pose_analysis_utils.dart';
 import 'package:flutter_fms/screens/home/edit_profile_screen.dart';
+import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:video_thumbnail/video_thumbnail.dart'
+    as video_thumbnail_package;
 
 class FMSCaptureScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -24,18 +30,19 @@ class FMSCaptureScreen extends StatefulWidget {
   State<FMSCaptureScreen> createState() => _FMSCaptureScreenState();
 }
 
-class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
+class _FMSCaptureScreenState extends State<FMSCaptureScreen>
+    with WidgetsBindingObserver {
   CameraController? _cameraController;
   bool _isRecording = false;
   String? _errorMessage;
-  bool _isProcessingFrame = false;
 
+  // Pose state
   ExerciseType? _selectedExercise;
   int _currentFmsScore = 0;
-
   final List<Pose> _poseHistory = [];
+  List<Pose> _detectedPoses = [];
 
-  // STREAM mode -> brže za live preview
+  // ML Kit detector (STREAM mode -> faster live preview)
   final PoseDetector _poseDetector = PoseDetector(
     options: PoseDetectorOptions(
       mode: PoseDetectionMode.stream,
@@ -43,15 +50,19 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     ),
   );
 
-  bool _isDetecting = false;
-  List<Pose> _detectedPoses = [];
+  // --- Live stream while recording: decoupled push/pull ---
+  CameraImage? _latestImage; // latest frame buffer (overwrites older)
+  bool _mlBusy = false; // prevents re-entrancy in ML loop
+  Timer? _mlTicker; // periodic pull loop timer
+  InputImageRotation _cachedRotation = InputImageRotation.rotation0deg;
 
-  // sample manje frameova u history
-  int _frameCounter = 0;
+  // sample fewer frames to history for scoring (every 3rd processed frame)
+  int _historySampleModulo = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.cameras.isNotEmpty) {
       _initializeCamera(widget.cameras[0]);
     } else {
@@ -61,15 +72,47 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
   @override
   void dispose() {
-    _cameraController?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+
+    _mlTicker?.cancel();
+    () async {
+      if (_cameraController?.value.isStreamingImages == true) {
+        try {
+          await _cameraController!.stopImageStream();
+        } catch (_) {}
+      }
+    }();
+
     _poseDetector.close();
+    _cameraController?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controller = _cameraController;
+    if (controller == null) return;
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _mlTicker?.cancel();
+      () async {
+        if (controller.value.isStreamingImages) {
+          try {
+            await controller.stopImageStream();
+          } catch (_) {}
+        }
+        await controller.dispose();
+      }();
+    } else if (state == AppLifecycleState.resumed) {
+      _initializeCamera(controller.description);
+    }
   }
 
   void _resetAnalysisState() {
     _poseHistory.clear();
     _currentFmsScore = 0;
-    _frameCounter = 0;
+    _historySampleModulo = 0;
   }
 
   Future<void> _initializeCamera(CameraDescription cam) async {
@@ -87,31 +130,22 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       );
       await _cameraController!.initialize();
 
-      _cameraController!.startImageStream((CameraImage image) async {
-        if (_isDetecting) return;
-        _isDetecting = true;
+      // Cache rotation (sensorOrientation is fixed per session)
+      _cachedRotation =
+          InputImageRotationValue.fromRawValue(
+            _cameraController!.description.sensorOrientation,
+          ) ??
+          InputImageRotation.rotation0deg;
 
-        final rotation =
-            InputImageRotationValue.fromRawValue(
-              _cameraController!.description.sensorOrientation,
-            ) ??
-            InputImageRotation.rotation0deg;
+      // Start ultra-light PUSH stream: store only latest frame
+      await _cameraController!.startImageStream((CameraImage image) {
+        _latestImage = image; // overwrite old frame; no heavy work here
+      });
 
-        try {
-          await _processCameraImage(image, rotation);
-
-          // Spremi svaki 3. frame u history dok snimamo
-          _frameCounter++;
-          if (_isRecording &&
-              _detectedPoses.isNotEmpty &&
-              _frameCounter % 3 == 0) {
-            _poseHistory.add(_detectedPoses.first);
-          }
-        } catch (e) {
-          debugPrint('Pose detection error: $e');
-        } finally {
-          _isDetecting = false;
-        }
+      // Start periodic PULL loop (10–15 Hz is enough for pose)
+      _mlTicker?.cancel();
+      _mlTicker = Timer.periodic(const Duration(milliseconds: 70), (_) {
+        _processLatestFrameIfAny();
       });
 
       if (mounted) setState(() => _errorMessage = null);
@@ -122,62 +156,73 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       });
       await _cameraController?.dispose();
     }
-  } // Add this field to your State class:
+  }
 
-  Future<void> _processCameraImage(
-    CameraImage image,
-    InputImageRotation rotation,
-  ) async {
-    if (_isProcessingFrame) return; // throttle frames
-    _isProcessingFrame = true;
+  // Periodic ML loop — processes at most one frame at a time
+  Future<void> _processLatestFrameIfAny() async {
+    if (_mlBusy) return;
+    final frame = _latestImage;
+    if (frame == null) return;
+
+    _mlBusy = true;
+    // clear buffer early so new frames can arrive during processing
+    _latestImage = null;
 
     try {
-      late final InputImage inputImage;
-
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        // ANDROID: Combine YUV420 planes into a single NV21 buffer
-        final WriteBuffer allBytes = WriteBuffer();
-        for (final Plane plane in image.planes) {
-          allBytes.putUint8List(plane.bytes);
-        }
-        final bytes = allBytes.done().buffer.asUint8List();
-
-        inputImage = InputImage.fromBytes(
-          bytes: bytes,
-          metadata: InputImageMetadata(
-            size: Size(image.width.toDouble(), image.height.toDouble()),
-            rotation: rotation,
-            // ML Kit expects NV21 on Android
-            format: InputImageFormat.nv21,
-            // bytesPerRow should come from the Y (first) plane
-            bytesPerRow: image.planes.first.bytesPerRow,
-          ),
-        );
-      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        // iOS: CameraImage is BGRA8888 (single plane)
-        final bytes = image.planes.first.bytes;
-
-        inputImage = InputImage.fromBytes(
-          bytes: bytes,
-          metadata: InputImageMetadata(
-            size: Size(image.width.toDouble(), image.height.toDouble()),
-            rotation: rotation,
-            format: InputImageFormat.bgra8888,
-            bytesPerRow: image.planes.first.bytesPerRow,
-          ),
-        );
-      } else {
-        // Unsupported platform
-        return;
-      }
-
-      final poses = await _poseDetector.processImage(inputImage);
+      final input = _toInputImage(frame, _cachedRotation);
+      final poses = await _poseDetector.processImage(input);
       if (!mounted) return;
       setState(() => _detectedPoses = poses);
+
+      // sample to history during recording (every 3rd processed frame)
+      if (_isRecording && poses.isNotEmpty) {
+        _historySampleModulo = (_historySampleModulo + 1) % 3;
+        if (_historySampleModulo == 0) {
+          _poseHistory.add(poses.first);
+        }
+      }
     } catch (e, st) {
-      debugPrint('[_processCameraImage] error: $e\n$st');
+      debugPrint('processLatestFrame error: $e$st');
     } finally {
-      _isProcessingFrame = false;
+      _mlBusy = false;
+    }
+  }
+
+  // Convert CameraImage → InputImage (Android NV21 / iOS BGRA8888)
+  InputImage _toInputImage(CameraImage image, InputImageRotation rotation) {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      if (image.planes.isEmpty) {
+        // Guard against unexpected buffers
+        throw StateError('No planes in CameraImage');
+      }
+
+      final WriteBuffer allBytes = WriteBuffer();
+      for (final Plane plane in image.planes) {
+        allBytes.putUint8List(plane.bytes);
+      }
+      final bytes = allBytes.done().buffer.asUint8List();
+
+      return InputImage.fromBytes(
+        bytes: bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: InputImageFormat.nv21, // ML Kit prefers NV21 on Android
+          bytesPerRow: image.planes.first.bytesPerRow, // Y plane stride
+        ),
+      );
+    } else {
+      // iOS: BGRA8888 single plane
+      final bytes = image.planes.first.bytes;
+      return InputImage.fromBytes(
+        bytes: bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: InputImageFormat.bgra8888,
+          bytesPerRow: image.planes.first.bytesPerRow,
+        ),
+      );
     }
   }
 
@@ -188,6 +233,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       return;
     }
     if (_selectedExercise == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Select an exercise first.')),
       );
@@ -197,6 +243,8 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     try {
       _resetAnalysisState();
+
+      // Keep the image stream running on Android while we record
       await _cameraController!.startVideoRecording();
       HapticFeedback.lightImpact();
       if (!mounted) return;
@@ -223,7 +271,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
       // Save to gallery via `gal`
       try {
-        final has = await Gal.hasAccess(toAlbum: true) ?? false;
+        final has = await (Gal.hasAccess(toAlbum: true) ?? Future.value(false));
         if (!has) {
           await Gal.requestAccess(toAlbum: true);
         }
@@ -239,7 +287,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         );
       }
 
-      // Tek nakon snimanja izračunaj featurese i spremi sesiju
+      // After recording, compute features and save session
       await _finalizeAndSaveSessionScore();
     } on CameraException catch (e) {
       if (!mounted) return;
@@ -249,23 +297,75 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
-  // Optional: pick from gallery (no upload; score only)
   Future<void> _analyzeVideoFromGallery() async {
     if (_selectedExercise == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Select an exercise first.')),
       );
       return;
     }
+
     final picker = ImagePicker();
     final XFile? video = await picker.pickVideo(source: ImageSource.gallery);
     if (video == null) return;
 
-    await _finalizeAndSaveSessionScore();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Analyzed video and saved session score')),
-    );
+    try {
+      // 1) Probe duration with video_player
+      final controller = VideoPlayerController.file(File(video.path));
+      await controller.initialize();
+      final duration = controller.value.duration;
+      await controller.dispose();
+
+      // 2) Extract frames at ~2 fps (adjust if you want)
+      const framesPerSecond = 2;
+      final frameStep = Duration(
+        milliseconds: (1000 / framesPerSecond).round(),
+      );
+      final totalMs = duration.inMilliseconds;
+
+      // Reset state so we only use frames from the picked video
+      _poseHistory.clear();
+
+      for (int t = 0; t < totalMs; t += frameStep.inMilliseconds) {
+        // 3) Make a frame image (thumbnail) at timestamp t
+        final String? framePath = await video_thumbnail_package
+            .VideoThumbnail.thumbnailFile(
+          video: video.path,
+          timeMs: t,
+          imageFormat: video_thumbnail_package.ImageFormat.JPEG,
+          quality: 80,
+        );
+
+        if (framePath == null) continue;
+
+        try {
+          // 4) Run ML Kit pose on that frame
+          final input = InputImage.fromFilePath(framePath);
+          final poses = await _poseDetector.processImage(input);
+
+          if (poses.isNotEmpty) {
+            // sample roughly every frame (you can downsample if needed)
+            _poseHistory.add(poses.first);
+          }
+        } catch (e) {
+          debugPrint('Gallery frame $t ms failed: $e');
+        }
+      }
+
+      // 5) Compute features/score and save session (now _poseHistory is filled)
+      await _finalizeAndSaveSessionScore();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Analyzed video and saved session score')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed analyzing video: $e')));
+    }
   }
 
   Future<void> _finalizeAndSaveSessionScore() async {
@@ -279,6 +379,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error: No user logged in.')),
       );
@@ -303,7 +404,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     try {
       final id = await FirestoreService().saveFMSession(session);
 
-      // Spremi featurse u taj session dokument
+      // Save features to that session document
       if (analysis != null) {
         await FirestoreService().updateFMSSession(
           sessionId: id,
@@ -330,11 +431,6 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   @override
   Widget build(BuildContext context) {
     const title = 'FMS Capture';
-    final exLabel =
-        _selectedExercise == null
-            ? 'Select exercise'
-            : (exerciseNames[_selectedExercise!] ??
-                _selectedExercise.toString());
 
     if (_errorMessage != null) {
       return Scaffold(
@@ -358,13 +454,15 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       );
     }
 
-    final rotation =
-        InputImageRotationValue.fromRawValue(
-          _cameraController!.description.sensorOrientation,
-        ) ??
-        InputImageRotation.rotation0deg;
+    final exLabel =
+        _selectedExercise == null
+            ? 'Select exercise'
+            : (exerciseNames[_selectedExercise!] ??
+                _selectedExercise.toString());
 
-    // -------- Overlay točno na korisniku (centered, cover scaling) --------
+    // Use cached rotation for the painter
+    final rotation = _cachedRotation;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(title),
@@ -418,19 +516,17 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final size = Size(constraints.maxWidth, constraints.maxHeight);
           final preview = _cameraController!.value.previewSize!;
-          final bool swap =
+          final bool isRot90or270 =
               rotation == InputImageRotation.rotation90deg ||
               rotation == InputImageRotation.rotation270deg;
 
-          // “Upright” slika koju painter očekuje
+          // Camera image logical size for painter
           final Size imageSize =
-              swap
+              isRot90or270
                   ? Size(preview.height, preview.width)
                   : Size(preview.width, preview.height);
 
-          // Napravimo “canvas” točno veličine input slike, pa ga FittedBox rastegne s cover
           final child = SizedBox(
             width: imageSize.width,
             height: imageSize.height,
@@ -514,9 +610,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
               ),
               const SizedBox(width: 6),
               Text(
-                _selectedExercise == null
-                    ? 'Select exercise'
-                    : (exerciseNames[_selectedExercise!] ?? 'Exercise'),
+                exLabel,
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w600,
