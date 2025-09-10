@@ -1,66 +1,67 @@
 plugins {
-  id "com.android.application"
-  id "org.jetbrains.kotlin.android"
-  id "com.google.gms.google-services"
-  id "dev.flutter.flutter-gradle-plugin"
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+    id "com.google.gms.google-services"
+    id "dev.flutter.flutter-gradle-plugin"
 }
 
 android {
-  namespace "com.example.flutter_fms"
+    namespace "com.example.flutter_fms"
 
-  // Match your plugins’ requirements (camera, mlkit, etc.)
-  compileSdkVersion 36
+    // Match your plugins’ requirements (camera, mlkit, etc.)
+    // Updated to at least 34 to resolve dependency issues.
+    compileSdkVersion 36
 
-  defaultConfig {
-    applicationId "com.example.flutter_fms"
+    defaultConfig {
+        applicationId "com.example.flutter_fms"
 
-    // Use a fixed number OR read from local.properties if you prefer
-    minSdkVersion flutter.minSdkVersion
-    targetSdkVersion 34
+        // Use a fixed number OR read from local.properties if you prefer
+        minSdkVersion flutter.minSdkVersion
+        targetSdkVersion 36
 
-    versionCode 1
-    versionName "1.0.0"
+        versionCode 1
+        versionName "1.0.0"
 
-    multiDexEnabled true
-  }
-
-  // If you need a specific NDK version (ML Kit often benefits from a pinned one)
-  ndkVersion "27.0.12077973"
-
-  compileOptions {
-    sourceCompatibility JavaVersion.VERSION_17
-    targetCompatibility JavaVersion.VERSION_17
-  }
-  kotlinOptions {
-    jvmTarget = "17"
-  }
-
-  buildTypes {
-    release {
-      // Replace with your real signingConfig before publishing
-      signingConfig signingConfigs.debug
-      minifyEnabled false
-      shrinkResources false
-      proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        multiDexEnabled true
     }
-  }
 
-  packagingOptions {
-    resources {
-      excludes += ["META-INF/*"]
+    // If you need a specific NDK version (ML Kit often benefits from a pinned one)
+    ndkVersion "27.0.12077973"
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
-    // Helps avoid native .so conflicts on some devices
-    jniLibs {
-      useLegacyPackaging true
+    kotlinOptions {
+        // Updated to reflect the compile options
+        jvmTarget = "17"
     }
-    // Common native dup fix
-    pickFirsts += ["**/libc++_shared.so"]
-  }
+
+    buildTypes {
+        release {
+            // Replace with your real signingConfig before publishing
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ["META-INF/*"]
+        }
+        // Helps avoid native .so conflicts on some devices
+        jniLibs {
+            useLegacyPackaging true
+        }
+        // Common native dup fix
+        pickFirsts += ["**/libc++_shared.so"]
+    }
 }
 
 dependencies {
-  implementation "androidx.multidex:multidex:2.0.1"
-  implementation 'com.google.mlkit:pose-detection:18.0.0-beta5'
-  implementation 'com.google.mlkit:pose-detection-accurate:18.0.0-beta5'
-
+    implementation "androidx.multidex:multidex:2.0.1"
+    implementation 'com.google.mlkit:pose-detection:18.0.0-beta5'
+    implementation 'com.google.mlkit:pose-detection-accurate:18.0.0-beta5'
 }
