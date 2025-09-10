@@ -41,10 +41,11 @@ dependencies:
   provider: ^6.1.5
   image_picker: ^1.2.0
   camera: ^0.11.2
+  camera_android_camerax: ^0.6.21
   intl: ^0.20.2
   video_player: ^2.10.0
   google_mlkit_pose_detection: ^0.14.0 # <-- THESE ARE THE IMPORTANT LINES!
-  google_mlkit_commons: ^0.11.0     # <-- THESE ARE THE IMPORTANT LINES!
+  #google_mlkit_commons: ^0.11.0     # <-- THESE ARE THE IMPORTANT LINES!
   gal: ^2.3.0
   google_fonts: ^4.0.4
   video_compress: ^3.1.2
@@ -60,6 +61,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  dart_code_metrics: ^4.19.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

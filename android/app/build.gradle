@@ -60,5 +60,7 @@ android {
 
 dependencies {
   implementation "androidx.multidex:multidex:2.0.1"
-  implementation "com.google.mlkit:pose-detection:18.0.0-beta5"
+  implementation 'com.google.mlkit:pose-detection:18.0.0-beta5'
+  implementation 'com.google.mlkit:pose-detection-accurate:18.0.0-beta5'
+
 }

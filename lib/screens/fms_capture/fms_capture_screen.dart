@@ -1,5 +1,4 @@
 // lib/screens/fms_capture/fms_capture_screen.dart
-
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
@@ -11,15 +10,11 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:gal/gal.dart';
 
-// (Optional) You no longer need to import google_mlkit_commons directly
-// because the pose package re-exports InputImage & InputImageMetadata.
-// import 'package:google_mlkit_commons/google_mlkit_commons.dart';
-
 import 'package:flutter_fms/services/firestore_service.dart';
 import 'package:flutter_fms/models/fms_session_model.dart';
 import 'package:flutter_fms/widgets/pose_painter.dart';
 import 'package:flutter_fms/utils/pose_analysis_utils.dart';
-import 'package:flutter_fms/services/auth_service.dart';
+import 'package:flutter_fms/screens/home/edit_profile_screen.dart';
 
 class FMSCaptureScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -33,12 +28,14 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   CameraController? _cameraController;
   bool _isRecording = false;
   String? _errorMessage;
+  bool _isProcessingFrame = false;
 
   ExerciseType? _selectedExercise;
   int _currentFmsScore = 0;
+
   final List<Pose> _poseHistory = [];
 
-  // Use BASE model for broader device support/perf
+  // STREAM mode -> brže za live preview
   final PoseDetector _poseDetector = PoseDetector(
     options: PoseDetectorOptions(
       mode: PoseDetectionMode.stream,
@@ -47,8 +44,10 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   );
 
   bool _isDetecting = false;
-  int _frameCount = 0; // simple throttle
   List<Pose> _detectedPoses = [];
+
+  // sample manje frameova u history
+  int _frameCounter = 0;
 
   @override
   void initState() {
@@ -70,6 +69,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   void _resetAnalysisState() {
     _poseHistory.clear();
     _currentFmsScore = 0;
+    _frameCounter = 0;
   }
 
   Future<void> _initializeCamera(CameraDescription cam) async {
@@ -78,20 +78,16 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       _cameraController = CameraController(
         cam,
         ResolutionPreset.medium,
-        enableAudio: true, // for video recording
+        enableAudio: true,
+        // iOS -> BGRA8888, Android -> YUV420
         imageFormatGroup:
             defaultTargetPlatform == TargetPlatform.iOS
-                ? ImageFormatGroup
-                    .bgra8888 // iOS
-                : ImageFormatGroup.yuv420, // Android
+                ? ImageFormatGroup.bgra8888
+                : ImageFormatGroup.yuv420,
       );
       await _cameraController!.initialize();
 
-      _cameraController!.startImageStream((CameraImage image) {
-        // Throttle a bit to help low-end devices
-        _frameCount = (_frameCount + 1) % 2;
-        if (_frameCount != 0) return;
-
+      _cameraController!.startImageStream((CameraImage image) async {
         if (_isDetecting) return;
         _isDetecting = true;
 
@@ -101,21 +97,21 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
             ) ??
             InputImageRotation.rotation0deg;
 
-        _processCameraImage(
-              image,
-              rotation,
-              _cameraController!.description.lensDirection,
-            )
-            .then((_) {
-              if (_isRecording && _detectedPoses.isNotEmpty) {
-                _poseHistory.add(_detectedPoses.first);
-              }
-              _isDetecting = false;
-            })
-            .catchError((e) {
-              _isDetecting = false;
-              debugPrint('Pose detection error: $e');
-            });
+        try {
+          await _processCameraImage(image, rotation);
+
+          // Spremi svaki 3. frame u history dok snimamo
+          _frameCounter++;
+          if (_isRecording &&
+              _detectedPoses.isNotEmpty &&
+              _frameCounter % 3 == 0) {
+            _poseHistory.add(_detectedPoses.first);
+          }
+        } catch (e) {
+          debugPrint('Pose detection error: $e');
+        } finally {
+          _isDetecting = false;
+        }
       });
 
       if (mounted) setState(() => _errorMessage = null);
@@ -126,72 +122,66 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       });
       await _cameraController?.dispose();
     }
-  }
+  } // Add this field to your State class:
 
   Future<void> _processCameraImage(
     CameraImage image,
     InputImageRotation rotation,
-    CameraLensDirection cameraLensDirection,
   ) async {
+    if (_isProcessingFrame) return; // throttle frames
+    _isProcessingFrame = true;
+
     try {
-      final inputImage;
+      late final InputImage inputImage;
+
       if (defaultTargetPlatform == TargetPlatform.android) {
-        // Correctly handle YUV data for Android
-        // This is a common pattern for converting CameraImage planes to a format
-        // that ML Kit's native Android API can understand.
-        final planes = image.planes;
-        // You must use a supported format like NV21. The planes need to be combined
-        // into a single Uint8List buffer with the correct offset.
-        final WriteBuffer allBytes = WriteBuffer();
-        for (final Plane plane in planes) {
-          allBytes.putUint8List(plane.bytes);
-        }
-        final bytes = allBytes.done().buffer.asUint8List();
-
-        final InputImageMetadata metadata = InputImageMetadata(
-          size: Size(image.width.toDouble(), image.height.toDouble()),
-          rotation: rotation,
-          format: InputImageFormat.nv21,
-          bytesPerRow:
-              image.planes[0].bytesPerRow, // Use bytesPerRow from the Y plane
-        );
-
-        inputImage = InputImage.fromBytes(bytes: bytes, metadata: metadata);
-      } else {
-        // This part for iOS is mostly correct.
+        // ANDROID: Combine YUV420 planes into a single NV21 buffer
         final WriteBuffer allBytes = WriteBuffer();
         for (final Plane plane in image.planes) {
           allBytes.putUint8List(plane.bytes);
         }
         final bytes = allBytes.done().buffer.asUint8List();
-        final inputImageFormat = InputImageFormat.bgra8888;
-
-        final inputImageMetadata = InputImageMetadata(
-          size: Size(image.width.toDouble(), image.height.toDouble()),
-          rotation: rotation,
-          format: inputImageFormat,
-          bytesPerRow: image.planes.first.bytesPerRow,
-        );
 
         inputImage = InputImage.fromBytes(
           bytes: bytes,
-          metadata: inputImageMetadata,
+          metadata: InputImageMetadata(
+            size: Size(image.width.toDouble(), image.height.toDouble()),
+            rotation: rotation,
+            // ML Kit expects NV21 on Android
+            format: InputImageFormat.nv21,
+            // bytesPerRow should come from the Y (first) plane
+            bytesPerRow: image.planes.first.bytesPerRow,
+          ),
         );
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        // iOS: CameraImage is BGRA8888 (single plane)
+        final bytes = image.planes.first.bytes;
+
+        inputImage = InputImage.fromBytes(
+          bytes: bytes,
+          metadata: InputImageMetadata(
+            size: Size(image.width.toDouble(), image.height.toDouble()),
+            rotation: rotation,
+            format: InputImageFormat.bgra8888,
+            bytesPerRow: image.planes.first.bytesPerRow,
+          ),
+        );
+      } else {
+        // Unsupported platform
+        return;
       }
 
-      // ===== Run detector =====
-      final List<Pose> poses = await _poseDetector.processImage(inputImage);
-
+      final poses = await _poseDetector.processImage(inputImage);
       if (!mounted) return;
       setState(() => _detectedPoses = poses);
-    } catch (e) {
-      debugPrint('Pose detection error during processing: $e');
-      if (!mounted) return;
-      setState(() => _detectedPoses = const []);
+    } catch (e, st) {
+      debugPrint('[_processCameraImage] error: $e\n$st');
+    } finally {
+      _isProcessingFrame = false;
     }
   }
 
-  // --------- Recording controls (save to device gallery) ----------
+  // --------- Recording controls (save only to device gallery) ----------
   Future<void> _startVideoRecording() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       setState(() => _errorMessage = 'Camera not initialized.');
@@ -231,9 +221,9 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       if (!mounted) return;
       setState(() => _isRecording = false);
 
-      // Save to gallery
+      // Save to gallery via `gal`
       try {
-        final has = await Gal.hasAccess(toAlbum: true);
+        final has = await Gal.hasAccess(toAlbum: true) ?? false;
         if (!has) {
           await Gal.requestAccess(toAlbum: true);
         }
@@ -249,7 +239,8 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
         );
       }
 
-      await _finalizeAndSaveSessionScore(); // Firestore: exercise + score + features
+      // Tek nakon snimanja izračunaj featurese i spremi sesiju
+      await _finalizeAndSaveSessionScore();
     } on CameraException catch (e) {
       if (!mounted) return;
       setState(
@@ -258,7 +249,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
-  // Analyze from gallery (no upload to history)
+  // Optional: pick from gallery (no upload; score only)
   Future<void> _analyzeVideoFromGallery() async {
     if (_selectedExercise == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -278,22 +269,27 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
   }
 
   Future<void> _finalizeAndSaveSessionScore() async {
-    final exercise = _selectedExercise ?? ExerciseType.overheadSquat;
-
-    final result = PoseAnalysisUtils.analyze(exercise, _poseHistory);
-    _currentFmsScore = result.score;
-    final features = result.features;
+    ExerciseAnalysisResult? analysis;
+    if (_selectedExercise != null) {
+      analysis = PoseAnalysisUtils.analyze(_selectedExercise!, _poseHistory);
+      _currentFmsScore = analysis.score;
+    } else {
+      _currentFmsScore = 0;
+    }
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error: No user logged in.')),
       );
       return;
     }
 
-    final exerciseName = exerciseNames[exercise] ?? exercise.toString();
+    final exerciseName =
+        _selectedExercise != null
+            ? (exerciseNames[_selectedExercise!] ??
+                _selectedExercise.toString())
+            : 'Unknown';
 
     final session = FMSSessionModel(
       userId: user.uid,
@@ -301,12 +297,20 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
       exercise: exerciseName,
       rating: _currentFmsScore,
       notes: '',
-      videoUrl: null, // history doesn’t show video for now
-      features: features,
+      videoUrl: null,
     );
 
     try {
-      await FirestoreService().saveFMSession(session);
+      final id = await FirestoreService().saveFMSession(session);
+
+      // Spremi featurse u taj session dokument
+      if (analysis != null) {
+        await FirestoreService().updateFMSSession(
+          sessionId: id,
+          updates: {'features': analysis.features},
+        );
+      }
+
       _poseHistory.clear();
     } catch (e) {
       if (!mounted) return;
@@ -316,23 +320,11 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
     }
   }
 
-  // ---------------- UI helpers ----------------
   void _selectExerciseFromMenu(ExerciseType choice) {
     setState(() {
       _selectedExercise = choice;
     });
     _resetAnalysisState();
-  }
-
-  Future<void> _signOut() async {
-    try {
-      await AuthService().signOut();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Sign out failed: $e')));
-    }
   }
 
   @override
@@ -346,16 +338,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     if (_errorMessage != null) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text(title),
-          actions: [
-            IconButton(
-              tooltip: 'Sign out',
-              icon: const Icon(Icons.logout),
-              onPressed: _signOut,
-            ),
-          ],
-        ),
+        appBar: AppBar(title: const Text(title)),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
@@ -370,34 +353,18 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
 
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text(title),
-          actions: [
-            IconButton(
-              tooltip: 'Sign out',
-              icon: const Icon(Icons.logout),
-              onPressed: _signOut,
-            ),
-          ],
-        ),
+        appBar: AppBar(title: const Text(title)),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
-    // Map preview + orientation to overlay
     final rotation =
         InputImageRotationValue.fromRawValue(
           _cameraController!.description.sensorOrientation,
         ) ??
         InputImageRotation.rotation0deg;
 
-    final Size preview = _cameraController!.value.previewSize!;
-    final bool swap =
-        rotation == InputImageRotation.rotation90deg ||
-        rotation == InputImageRotation.rotation270deg;
-    final Size imageSizeUpright =
-        swap ? Size(preview.height, preview.width) : preview;
-
+    // -------- Overlay točno na korisniku (centered, cover scaling) --------
     return Scaffold(
       appBar: AppBar(
         title: const Text(title),
@@ -430,108 +397,141 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen> {
           ),
           const SizedBox(width: 6),
           IconButton(
-            tooltip: 'Sign out',
+            tooltip: 'Edit Profile',
+            icon: const Icon(Icons.account_circle),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Sign Out',
             icon: const Icon(Icons.logout),
-            onPressed: _signOut,
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+            },
           ),
           const SizedBox(width: 6),
         ],
       ),
-      body: Stack(
-        children: [
-          Positioned.fill(child: CameraPreview(_cameraController!)),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final size = Size(constraints.maxWidth, constraints.maxHeight);
+          final preview = _cameraController!.value.previewSize!;
+          final bool swap =
+              rotation == InputImageRotation.rotation90deg ||
+              rotation == InputImageRotation.rotation270deg;
 
-          if (_cameraController!.value.isInitialized &&
-              _cameraController!.value.previewSize != null)
-            Positioned.fill(
-              child: CustomPaint(
-                painter: PosePainter(
-                  _detectedPoses,
-                  imageSizeUpright,
-                  rotation,
-                  _cameraController!.description.lensDirection,
-                ),
-              ),
-            ),
+          // “Upright” slika koju painter očekuje
+          final Size imageSize =
+              swap
+                  ? Size(preview.height, preview.width)
+                  : Size(preview.width, preview.height);
 
-          // Status chip
-          SafeArea(
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: Container(
-                margin: const EdgeInsets.only(top: 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.35),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.sports_gymnastics,
-                      color: Colors.white,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      exLabel,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Icon(Icons.star, color: Colors.amber, size: 18),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Score: $_currentFmsScore',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // Bottom controls
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              color: Colors.black54,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  FilledButton.icon(
-                    onPressed:
-                        _isRecording
-                            ? _stopVideoRecordingAndSave
-                            : _startVideoRecording,
-                    icon: Icon(
-                      _isRecording ? Icons.stop : Icons.fiber_manual_record,
-                    ),
-                    label: Text(_isRecording ? 'Stop & Save' : 'Record'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor:
-                          _isRecording
-                              ? Colors.red
-                              : Theme.of(context).colorScheme.primary,
-                    ),
+          // Napravimo “canvas” točno veličine input slike, pa ga FittedBox rastegne s cover
+          final child = SizedBox(
+            width: imageSize.width,
+            height: imageSize.height,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                CameraPreview(_cameraController!),
+                CustomPaint(
+                  painter: PosePainter(
+                    _detectedPoses,
+                    imageSize,
+                    rotation,
+                    _cameraController!.description.lensDirection,
                   ),
-                  OutlinedButton.icon(
-                    onPressed: _analyzeVideoFromGallery,
-                    icon: const Icon(Icons.video_library),
-                    label: const Text('Analyze from Gallery'),
-                  ),
-                ],
+                ),
+              ],
+            ),
+          );
+
+          return Center(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: imageSize.width,
+                height: imageSize.height,
+                child: child,
               ),
             ),
+          );
+        },
+      ),
+
+      // Bottom controls
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        color: Colors.black54,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            FilledButton.icon(
+              onPressed:
+                  _isRecording
+                      ? _stopVideoRecordingAndSave
+                      : _startVideoRecording,
+              icon: Icon(_isRecording ? Icons.stop : Icons.fiber_manual_record),
+              label: Text(_isRecording ? 'Stop & Save' : 'Record'),
+              style: FilledButton.styleFrom(
+                backgroundColor:
+                    _isRecording
+                        ? Colors.red
+                        : Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: _analyzeVideoFromGallery,
+              icon: const Icon(Icons.video_library),
+              label: const Text('Analyze from Gallery'),
+            ),
+          ],
+        ),
+      ),
+
+      // Status chip
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerTop,
+      floatingActionButton: SafeArea(
+        child: Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.35),
+            borderRadius: BorderRadius.circular(12),
           ),
-        ],
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.sports_gymnastics,
+                color: Colors.white,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _selectedExercise == null
+                    ? 'Select exercise'
+                    : (exerciseNames[_selectedExercise!] ?? 'Exercise'),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Icon(Icons.star, color: Colors.amber, size: 18),
+              const SizedBox(width: 4),
+              Text(
+                'Score: $_currentFmsScore',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
