@@ -1,25 +1,26 @@
 // lib/screens/fms_capture/fms_capture_screen.dart
 
 import 'dart:async';
-import 'package:flutter/services.dart';
-import 'package:flutter/material.dart';
+import 'dart:io';
+
 import 'package:camera/camera.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:gal/gal.dart';
-import 'dart:io';
-
-import 'package:flutter_fms/services/firestore_service.dart';
-import 'package:flutter_fms/models/fms_session_model.dart';
-import 'package:flutter_fms/widgets/pose_painter.dart';
-import 'package:flutter_fms/utils/pose_analysis_utils.dart';
-import 'package:flutter_fms/screens/home/edit_profile_screen.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart'
     as video_thumbnail_package;
+
+import 'package:flutter_fms/models/fms_session_model.dart';
+import 'package:flutter_fms/screens/home/edit_profile_screen.dart';
+import 'package:flutter_fms/services/firestore_service.dart';
+import 'package:flutter_fms/utils/pose_analysis_utils.dart';
+import 'package:flutter_fms/widgets/pose_painter.dart';
 
 class FMSCaptureScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -101,6 +102,8 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
             await controller.stopImageStream();
           } catch (_) {}
         }
+        // 🔐 Nuliraj referencu prije dispose i triggeraj rebuild
+        if (mounted) setState(() => _cameraController = null);
         await controller.dispose();
       }();
     } else if (state == AppLifecycleState.resumed) {
@@ -187,14 +190,12 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
     }
   }
 
-  // Convert CameraImage → InputImage (Android NV21 / iOS BGRA8888)
+  // Convert CameraImage → InputImage
   InputImage _toInputImage(CameraImage image, InputImageRotation rotation) {
     if (defaultTargetPlatform == TargetPlatform.android) {
       if (image.planes.isEmpty) {
-        // Guard against unexpected buffers
         throw StateError('No planes in CameraImage');
       }
-
       final WriteBuffer allBytes = WriteBuffer();
       for (final Plane plane in image.planes) {
         allBytes.putUint8List(plane.bytes);
@@ -206,8 +207,8 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
           rotation: rotation,
-          format: InputImageFormat.nv21, // ML Kit prefers NV21 on Android
-          bytesPerRow: image.planes.first.bytesPerRow, // Y plane stride
+          format: InputImageFormat.nv21,
+          bytesPerRow: image.planes.first.bytesPerRow,
         ),
       );
     } else {
@@ -223,6 +224,60 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
         ),
       );
     }
+  }
+
+  // ---------- Self-report bol dijalog ----------
+  Future<Map<String, bool>> _askSelfReportPain(BuildContext context) async {
+    bool lowBack = false;
+    bool hamOrCalf = false;
+
+    final result = await showDialog<Map<String, bool>>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setState) {
+            return AlertDialog(
+              title: const Text('Self-report bol za vrijeme pokreta'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CheckboxListTile(
+                    value: lowBack,
+                    onChanged: (v) => setState(() => lowBack = v ?? false),
+                    title: const Text('Bol u donjim leđima'),
+                  ),
+                  CheckboxListTile(
+                    value: hamOrCalf,
+                    onChanged: (v) => setState(() => hamOrCalf = v ?? false),
+                    title: const Text('Bol u stražnjoj loži / listu'),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed:
+                      () => Navigator.pop(ctx, {
+                        'lowBack': false,
+                        'hamOrCalf': false,
+                      }),
+                  child: const Text('Preskoči'),
+                ),
+                FilledButton(
+                  onPressed:
+                      () => Navigator.pop(ctx, {
+                        'lowBack': lowBack,
+                        'hamOrCalf': hamOrCalf,
+                      }),
+                  child: const Text('Spremi'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    return result ?? {'lowBack': false, 'hamOrCalf': false};
   }
 
   // --------- Recording controls (save only to device gallery) ----------
@@ -260,8 +315,10 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
   }
 
   Future<void> _stopVideoRecordingAndSave() async {
-    if (_cameraController == null || !_cameraController!.value.isRecordingVideo)
+    if (_cameraController == null ||
+        !_cameraController!.value.isRecordingVideo) {
       return;
+    }
     try {
       final XFile file = await _cameraController!.stopVideoRecording();
       HapticFeedback.selectionClick();
@@ -342,9 +399,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
           // 4) Run ML Kit pose on that frame
           final input = InputImage.fromFilePath(framePath);
           final poses = await _poseDetector.processImage(input);
-
           if (poses.isNotEmpty) {
-            // sample roughly every frame (you can downsample if needed)
             _poseHistory.add(poses.first);
           }
         } catch (e) {
@@ -352,7 +407,7 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
         }
       }
 
-      // 5) Compute features/score and save session (now _poseHistory is filled)
+      // 5) Compute features/score and save session
       await _finalizeAndSaveSessionScore();
 
       if (!mounted) return;
@@ -369,8 +424,21 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
 
   Future<void> _finalizeAndSaveSessionScore() async {
     ExerciseAnalysisResult? analysis;
+
+    // 1) Self-report prije analize (ako nije odabrana vježba, već imaš guard)
+    Map<String, bool> pain = {'lowBack': false, 'hamOrCalf': false};
     if (_selectedExercise != null) {
-      analysis = PoseAnalysisUtils.analyze(_selectedExercise!, _poseHistory);
+      pain = await _askSelfReportPain(context);
+    }
+
+    // 2) Analiza s kontekstom (bol → score = 0)
+    if (_selectedExercise != null) {
+      analysis = PoseAnalysisUtils.analyzeWithContext(
+        _selectedExercise!,
+        _poseHistory,
+        painLowBack: pain['lowBack'] ?? false,
+        painHamstringOrCalf: pain['hamOrCalf'] ?? false,
+      );
       _currentFmsScore = analysis.score;
     } else {
       _currentFmsScore = 0;
@@ -391,27 +459,56 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
                 _selectedExercise.toString())
             : 'Unknown';
 
+    // 3) Personalizirani feedback
+    String feedback;
+    if (_currentFmsScore == 0) {
+      feedback =
+          'Prijavljena bol pri izvođenju. Preporučuje se konzultirati stručnu osobu (kineziolog, fizijatar).';
+    } else if (_currentFmsScore == 1) {
+      feedback =
+          'Ocjena 1 upućuje na disfunkcionalan pokret. Preporučuje se savjetovanje sa stručnom osobom.';
+    } else if (_currentFmsScore == 2) {
+      feedback =
+          'Ocjena 2: zadovoljavajuća izvedba uz moguće kompenzacije. Raditi na mobilnosti/stabilnosti.';
+    } else {
+      feedback =
+          'Odlična izvedba (3). Nastaviti s održavanjem kvalitete pokreta.';
+    }
+
     final session = FMSSessionModel(
       userId: user.uid,
       timestamp: DateTime.now(),
       exercise: exerciseName,
       rating: _currentFmsScore,
-      notes: '',
+      notes: feedback, // dodatno zapisujemo i u root "feedback" polje ispod
       videoUrl: null,
     );
 
     try {
+      // 4) Kreiraj sesiju
       final id = await FirestoreService().saveFMSession(session);
 
-      // Save features to that session document
+      // 5) Spremi features + self-report + feedback
+      final updates = <String, dynamic>{
+        'feedback': feedback,
+        'painLowBack': pain['lowBack'] ?? false,
+        'painHamstringOrCalf': pain['hamOrCalf'] ?? false,
+      };
       if (analysis != null) {
-        await FirestoreService().updateFMSSession(
-          sessionId: id,
-          updates: {'features': analysis.features},
-        );
+        updates['features'] = analysis.features;
       }
 
+      await FirestoreService().updateFMSSession(
+        sessionId: id,
+        updates: updates,
+      );
+
       _poseHistory.clear();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Session saved (score: $_currentFmsScore)')),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -446,7 +543,9 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
       );
     }
 
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+    final controller = _cameraController; // lokalna kopija
+
+    if (controller == null || !controller.value.isInitialized) {
       return Scaffold(
         appBar: AppBar(title: const Text(title)),
         body: const Center(child: CircularProgressIndicator()),
@@ -464,58 +563,99 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(title),
+        title: const Text('FMS Capture'),
+        titleSpacing: 8,
         actions: [
-          PopupMenuButton<ExerciseType>(
-            tooltip: 'Select exercise',
-            icon: Row(
-              children: [
-                const Icon(Icons.fitness_center),
-                const SizedBox(width: 6),
-                Text(
-                  _selectedExercise == null
-                      ? 'Exercise'
-                      : (exerciseNames[_selectedExercise!] ?? 'Exercise'),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(width: 6),
-                const Icon(Icons.arrow_drop_down),
-              ],
-            ),
-            onSelected: _selectExerciseFromMenu,
-            itemBuilder: (context) {
-              return ExerciseType.values.map((e) {
-                return PopupMenuItem<ExerciseType>(
-                  value: e,
-                  child: Text(exerciseNames[e] ?? e.toString()),
-                );
-              }).toList();
-            },
-          ),
-          const SizedBox(width: 6),
-          IconButton(
-            tooltip: 'Edit Profile',
-            icon: const Icon(Icons.account_circle),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final w = MediaQuery.of(context).size.width;
+              final compact = w < 380; // uski ekrani
+
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PopupMenuButton<ExerciseType>(
+                    tooltip: 'Select exercise',
+                    child:
+                        compact
+                            ? const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 8.0),
+                              child: Icon(Icons.fitness_center),
+                            )
+                            : Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.fitness_center, size: 18),
+                                  const SizedBox(width: 6),
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 160,
+                                    ),
+                                    child: Text(
+                                      _selectedExercise == null
+                                          ? 'Exercise'
+                                          : (exerciseNames[_selectedExercise!] ??
+                                              'Exercise'),
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  const Icon(Icons.arrow_drop_down),
+                                ],
+                              ),
+                            ),
+                    onSelected: _selectExerciseFromMenu,
+                    itemBuilder: (context) {
+                      return ExerciseType.values.map((e) {
+                        return PopupMenuItem<ExerciseType>(
+                          value: e,
+                          child: Text(exerciseNames[e] ?? e.toString()),
+                        );
+                      }).toList();
+                    },
+                  ),
+                  IconButton(
+                    tooltip: 'Edit Profile',
+                    icon: const Icon(Icons.account_circle),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const EditProfileScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  IconButton(
+                    tooltip: 'Sign Out',
+                    icon: const Icon(Icons.logout),
+                    onPressed: () async {
+                      await FirebaseAuth.instance.signOut();
+                    },
+                  ),
+                ],
               );
             },
           ),
-          IconButton(
-            tooltip: 'Sign Out',
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-            },
-          ),
-          const SizedBox(width: 6),
         ],
       ),
+
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final preview = _cameraController!.value.previewSize!;
+          final preview = controller.value.previewSize!;
           final bool isRot90or270 =
               rotation == InputImageRotation.rotation90deg ||
               rotation == InputImageRotation.rotation270deg;
@@ -532,13 +672,13 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                CameraPreview(_cameraController!),
+                if (controller.value.isInitialized) CameraPreview(controller),
                 CustomPaint(
                   painter: PosePainter(
                     _detectedPoses,
                     imageSize,
                     rotation,
-                    _cameraController!.description.lensDirection,
+                    controller.description.lensDirection,
                   ),
                 ),
               ],

@@ -36,6 +36,8 @@ migrate_working_dir/
 .pub/
 build/
 pubspec.lock
+/web/
+
 
 # ---------------------------------------
 # Android

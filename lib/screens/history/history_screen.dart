@@ -24,7 +24,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
   String _formatTs(DateTime ts) {
     if (ts.millisecondsSinceEpoch == 0) return 'Syncing…';
     return _dateFmt.format(ts.toLocal());
-    // Ako koristiš serverTimestamp, u prvom trenutku može biti 0 dok se ne sync-a.
   }
 
   List<FMSSessionModel> _applyFilters(List<FMSSessionModel> items) {
@@ -42,7 +41,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
           final q = _query.toLowerCase();
           return s.exercise.toLowerCase().contains(q) ||
               s.rating.toString().contains(q) ||
-              _formatTs(s.timestamp).toLowerCase().contains(q);
+              _formatTs(s.timestamp).toLowerCase().contains(q) ||
+              s.feedback.toLowerCase().contains(q) ||
+              s.notes.toLowerCase().contains(q);
         }).toList();
 
     list.sort((a, b) => a.timestamp.compareTo(b.timestamp));
@@ -100,7 +101,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               onChanged: (v) => setState(() => _query = v),
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search),
-                hintText: 'Search (exercise, score, date)…',
+                hintText: 'Search (exercise, score, date, feedback)…',
                 isDense: true,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -147,17 +148,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  // ------- FEATURES UI HELPERS -------
-
-  String _prettyNumber(dynamic v) {
-    if (v is num) {
-      // za čitljivost: 1 decimal ako ima smisla
-      final n = v.toDouble();
-      return (n % 1 == 0) ? n.toStringAsFixed(0) : n.toStringAsFixed(1);
-    }
-    return '$v';
-  }
-
+  // ------- FEATURES & SELF-REPORT UI HELPERS -------
   Widget _buildFeatures(Map<String, dynamic>? features) {
     if (features == null || features.isEmpty) {
       return const Text(
@@ -166,91 +157,136 @@ class _HistoryScreenState extends State<HistoryScreen> {
       );
     }
 
-    // Podijeli u dvije kolone za urednost ako ima više metrika
     final entries = features.entries.toList();
+
+    // kako prikazati JEDNU stavku (key/value) bez overflowa
+    Widget _featureItem(BuildContext context, MapEntry<String, dynamic> e) {
+      final keyStr = e.key;
+      final valStr = '${e.value}';
+      final isLong = valStr.length > 24 || valStr.contains('\n');
+
+      if (isLong) {
+        // duge vrijednosti: 2 retka (key gore, value ispod)
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              keyStr,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(valStr, softWrap: true),
+          ],
+        );
+      } else {
+        // kratke vrijednosti: 1 red s dvije kolone (elipse ako zafali mjesta)
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                keyStr,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Text(
+                valStr,
+                textAlign: TextAlign.right,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        );
+      }
+    }
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth > 420;
-        final children =
-            entries.map((e) {
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Flexible(
-                    child: Text(
-                      e.key,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
+
+        // napravi listu widgeta (po jedan za svaki feature)
+        final items =
+            entries
+                .map(
+                  (e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: _featureItem(context, e),
                   ),
-                  const SizedBox(width: 12),
-                  Text(
-                    _prettyNumber(e.value),
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ],
-              );
-            }).toList();
+                )
+                .toList();
 
         if (!isWide) {
+          // usko: jedna kolona
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ...children.map(
-                (row) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: row,
-                ),
-              ),
-            ],
+            children: items,
           );
         }
 
-        // Wide: dvokolonski prikaz
-        final half = (children.length / 2).ceil();
-        final left = children.take(half).toList();
-        final right = children.skip(half).toList();
+        // široko: dvije kolone (prvu polovicu lijevo, drugu desno)
+        final half = (items.length / 2).ceil();
+        final left = items.take(half).toList();
+        final right = items.skip(half).toList();
 
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                children:
-                    left
-                        .map(
-                          (row) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: row,
-                          ),
-                        )
-                        .toList(),
-              ),
-            ),
+            Expanded(child: Column(children: left)),
             const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                children:
-                    right
-                        .map(
-                          (row) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: row,
-                          ),
-                        )
-                        .toList(),
-              ),
-            ),
+            Expanded(child: Column(children: right)),
           ],
         );
       },
     );
   }
 
+  Widget _buildPainChips(FMSSessionModel s) {
+    final chips = <Widget>[];
+    if (s.painLowBack) {
+      chips.add(
+        Chip(
+          label: const Text('Bol: donja leđa'),
+          avatar: const Icon(Icons.warning_amber),
+          backgroundColor: Colors.orange.withOpacity(0.15),
+          side: BorderSide(color: Colors.orange.shade300),
+          visualDensity: VisualDensity.compact,
+        ),
+      );
+    }
+    if (s.painHamstringOrCalf) {
+      chips.add(
+        Chip(
+          label: const Text('Bol: loža / list'),
+          avatar: const Icon(Icons.warning_amber),
+          backgroundColor: Colors.orange.withOpacity(0.15),
+          side: BorderSide(color: Colors.orange.shade300),
+          visualDensity: VisualDensity.compact,
+        ),
+      );
+    }
+
+    if (chips.isEmpty) {
+      return const Text(
+        'No pain reported.',
+        style: TextStyle(color: Colors.grey),
+      );
+    }
+
+    return Wrap(spacing: 8, runSpacing: 4, children: chips);
+  }
+
   Widget _buildTile(BuildContext context, FMSSessionModel s) {
     final dateStr = _formatTs(s.timestamp);
+    final hasPain = s.painLowBack || s.painHamstringOrCalf;
+    final lowScore = s.rating <= 1;
 
     return Dismissible(
       key: ValueKey(
@@ -270,23 +306,44 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ),
       confirmDismiss: (_) => _confirmDelete(context, s),
 
-      // ExpansionTile za prikaz značajki
       child: Card(
         margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
-        elevation: 3,
+        elevation: lowScore ? 4 : 3,
+        shadowColor: lowScore ? Colors.redAccent : null,
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 14),
           childrenPadding: const EdgeInsets.symmetric(
             vertical: 8,
             horizontal: 16,
           ),
-          title: Text(
-            s.exercise,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  s.exercise,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (hasPain)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Icon(
+                    Icons.health_and_safety,
+                    color: Colors.orange.shade400,
+                    size: 18,
+                  ),
+                ),
+              if (lowScore)
+                const Padding(
+                  padding: EdgeInsets.only(left: 6),
+                  child: Icon(Icons.info, color: Colors.redAccent, size: 18),
+                ),
+            ],
           ),
           subtitle: Text('$dateStr  •  Score: ${s.rating}'),
           trailing: const Icon(Icons.expand_more),
           children: [
+            // FEATURES
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -297,7 +354,52 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            _buildFeatures(s.features), // <<<<<<<<<<<< prikaz mape
+            _buildFeatures(s.features),
+            const SizedBox(height: 12),
+
+            const Divider(),
+
+            // SELF-REPORT & FEEDBACK
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Self-report & Feedback',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildPainChips(s),
+            const SizedBox(height: 8),
+            if (s.feedback.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Feedback: ${s.feedback}',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              )
+            else if (s.notes.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Notes: ${s.notes}',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              )
+            else
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'No feedback recorded.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
             const SizedBox(height: 8),
           ],
         ),

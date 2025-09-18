@@ -1,24 +1,54 @@
 import 'dart:math' as math;
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
-/// Keep only 3 exercises (as agreed)
-enum ExerciseType { overheadSquat, standardPushUp, forwardLunge }
+/// =====================  Podešivi pragovi  =====================
+/// — promijeni po potrebi bez diranja ostatka koda
+class Thresholds {
+  // ASLR
+  static const double trunkInstabilityPctMax = 8.0; // ≤8% varijacije ramena–kuk
+  static const double headInstabilityPctMax =
+      10.0; // ≤10% varijacije nos–sredina ramena
+  static const double kneeStraightMinDeg = 175.0; // koljeno ≳ 175° je "ravno"
+  static const double movingStraightRatioMin =
+      0.90; // pokretna noga ravna ≥90% frameova
+  static const double stillStraightRatioMin =
+      0.95; // nepokretna noga ravna ≥95% frameova
+
+  // ASLR geometrija (hip flex)
+  static const double aslrScore1Max = 30.0; // 0–30  → score 1
+  static const double aslrScore2Max = 70.0; // 31–70 → score 2
+  // >70 → score 3
+
+  // Squat
+  static const double squatKneeDepthDeg = 120.0; // oba koljena > 120° na dnu
+  static const double squatTorsoUprightDeg =
+      150.0; // prosjek shoulder–hip–ankle ≥ 150°
+}
+
+/// Traženi skup pokreta
+enum ExerciseType {
+  squat, // čučanj
+  activeLegRaiseLeft, // ASLR – lijeva noga se podiže
+  activeLegRaiseRight, // ASLR – desna noga se podiže
+}
 
 final Map<ExerciseType, String> exerciseNames = {
-  ExerciseType.overheadSquat: 'Overhead Squat',
-  ExerciseType.standardPushUp: 'Push-Up',
-  ExerciseType.forwardLunge: 'Forward Lunge',
+  ExerciseType.squat: 'Squat',
+  ExerciseType.activeLegRaiseLeft: 'Active Straight Leg Raise (Left)',
+  ExerciseType.activeLegRaiseRight: 'Active Straight Leg Raise (Right)',
 };
 
 class ExerciseAnalysisResult {
   final int score; // 0..3
-  final Map<String, dynamic> features;
+  final Map<String, dynamic> features; // sve mjerne značajke + flagovi
 
   ExerciseAnalysisResult(this.score, this.features);
 }
 
 class PoseAnalysisUtils {
-  /// Angle at midPoint (in degrees 0..180) formed by A(mid<-first) and B(mid->last)
+  // ----------------- Opće pomoćne funkcije -----------------
+
+  /// Ugaoni kut u midPoint (0..180) između (first -> mid) i (last -> mid)
   static double angle(
     PoseLandmark firstPoint,
     PoseLandmark midPoint,
@@ -28,13 +58,314 @@ class PoseAnalysisUtils {
     final ay = firstPoint.y - midPoint.y;
     final bx = lastPoint.x - midPoint.x;
     final by = lastPoint.y - midPoint.y;
-    double radians = math.atan2(by, bx) - math.atan2(ay, ax);
-    double deg = (radians * 180 / math.pi).abs();
+    var radians = math.atan2(by, bx) - math.atan2(ay, ax);
+    var deg = (radians * 180 / math.pi).abs();
     if (deg > 180) deg = 360 - deg;
     return deg;
   }
 
-  /// Checks if the user is moving down based on the `smallerIsDown` flag and thresholds.
+  static double dist(PoseLandmark a, PoseLandmark b) {
+    final dx = a.x - b.x;
+    final dy = a.y - b.y;
+    return math.sqrt(dx * dx + dy * dy);
+  }
+
+  /// Relativna nestabilnost u % ( (max - min) / mean * 100 )
+  static double instabilityPercent(List<double> series) {
+    if (series.isEmpty) return 100;
+    final minV = series.reduce(math.min);
+    final maxV = series.reduce(math.max);
+    final mean = series.reduce((a, b) => a + b) / series.length;
+    if (mean == 0) return 100;
+    return (maxV - minV) / mean * 100.0;
+  }
+
+  /// Je li koljeno praktički ravno (≈ 180°)
+  static bool kneeStraight(
+    PoseLandmark hip,
+    PoseLandmark knee,
+    PoseLandmark ankle, {
+    double minDeg = Thresholds.kneeStraightMinDeg,
+  }) {
+    final k = angle(hip, knee, ankle);
+    return k >= minDeg;
+  }
+
+  /// Hip flexion (0..~120): 180 - ∠(shoulder, hip, knee) — veće = bolja fleksija
+  static double hipFlexionDeg(
+    PoseLandmark shoulder,
+    PoseLandmark hip,
+    PoseLandmark knee,
+  ) {
+    final hipJoint = angle(shoulder, hip, knee);
+    return 180.0 - hipJoint;
+  }
+
+  /// Srednja točka dviju točaka (za mid-shoulder, mid-hip itd.)
+  static PoseLandmark _mid(PoseLandmark a, PoseLandmark b) => PoseLandmark(
+    type: PoseLandmarkType.values.first, // dummy (nije bitan)
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+    z: (a.z + b.z) / 2,
+    likelihood: 1.0,
+  );
+
+  // ----------------- Javni API -----------------
+
+  static ExerciseAnalysisResult analyze(ExerciseType type, List<Pose> frames) {
+    return analyzeWithContext(
+      type,
+      frames,
+      painLowBack: false,
+      painHamstringOrCalf: false,
+    );
+  }
+
+  /// Verzija s self-report kontekstom (bol → automatski score=0)
+  static ExerciseAnalysisResult analyzeWithContext(
+    ExerciseType type,
+    List<Pose> frames, {
+    required bool painLowBack,
+    required bool painHamstringOrCalf,
+  }) {
+    if (painLowBack == true || painHamstringOrCalf == true) {
+      return ExerciseAnalysisResult(0, {
+        'framesAnalyzed': frames.length,
+        'painLowBack': painLowBack,
+        'painHamstringOrCalf': painHamstringOrCalf,
+        'note': 'Self-report pain present → score=0',
+      });
+    }
+
+    switch (type) {
+      case ExerciseType.squat:
+        return _analyzeSquat(frames);
+      case ExerciseType.activeLegRaiseLeft:
+        return _analyzeASLR(frames, movingLeftLeg: true);
+      case ExerciseType.activeLegRaiseRight:
+        return _analyzeASLR(frames, movingLeftLeg: false);
+    }
+  }
+
+  // ----------------- ASLR (Active Straight Leg Raise) -----------------
+  static ExerciseAnalysisResult _analyzeASLR(
+    List<Pose> frames, {
+    required bool movingLeftLeg,
+  }) {
+    if (frames.isEmpty) {
+      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
+    }
+
+    // Serije za stabilnost trupa i glave
+    final trunkDistSeries = <double>[];
+    final headDistSeries = <double>[];
+
+    // Serije za ravnost nogu i fleksiju
+    final movingKneeStraightSeries = <bool>[];
+    final stillKneeStraightSeries = <bool>[];
+    final hipFlexSeries = <double>[];
+
+    int validFrames = 0;
+
+    for (final p in frames) {
+      final ls = p.landmarks[PoseLandmarkType.leftShoulder];
+      final rs = p.landmarks[PoseLandmarkType.rightShoulder];
+      final lh = p.landmarks[PoseLandmarkType.leftHip];
+      final rh = p.landmarks[PoseLandmarkType.rightHip];
+      final lk = p.landmarks[PoseLandmarkType.leftKnee];
+      final rk = p.landmarks[PoseLandmarkType.rightKnee];
+      final la = p.landmarks[PoseLandmarkType.leftAnkle];
+      final ra = p.landmarks[PoseLandmarkType.rightAnkle];
+      final nose = p.landmarks[PoseLandmarkType.nose];
+
+      if ([ls, rs, lh, rh, lk, rk, la, ra, nose].any((e) => e == null)) {
+        continue;
+      }
+
+      final midShoulder = _mid(ls!, rs!);
+
+      // 1) Stabilnost trupa i glave (distance kroz vrijeme)
+      final trunkLeft = dist(ls, lh!);
+      final trunkRight = dist(rs, rh!);
+      trunkDistSeries.add((trunkLeft + trunkRight) / 2.0);
+
+      final headToShoulders = dist(nose!, midShoulder);
+      headDistSeries.add(headToShoulders);
+
+      // 2) Ravnost nogu
+      final movingHip = movingLeftLeg ? lh : rh;
+      final movingKnee = movingLeftLeg ? lk : rk;
+      final movingAnkle = movingLeftLeg ? la : ra;
+
+      final stillHip = movingLeftLeg ? rh : lh;
+      final stillKnee = movingLeftLeg ? rk : lk;
+      final stillAnkle = movingLeftLeg ? ra : la;
+
+      final movingStraight = kneeStraight(
+        movingHip!,
+        movingKnee!,
+        movingAnkle!,
+      );
+      final stillStraight = kneeStraight(stillHip!, stillKnee!, stillAnkle!);
+
+      movingKneeStraightSeries.add(movingStraight);
+      stillKneeStraightSeries.add(stillStraight);
+
+      // 3) Fleksija kuka (koristi ipsilateralno rame kao referencu)
+      final ipsiShoulder = movingLeftLeg ? ls : rs;
+      final hipFlex = hipFlexionDeg(ipsiShoulder!, movingHip, movingKnee);
+      hipFlexSeries.add(hipFlex);
+
+      validFrames++;
+    }
+
+    if (validFrames == 0 || hipFlexSeries.isEmpty) {
+      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
+    }
+
+    // Stabilnost
+    final trunkInstabPct = instabilityPercent(trunkDistSeries);
+    final headInstabPct = instabilityPercent(headDistSeries);
+    final trunkStable = trunkInstabPct <= Thresholds.trunkInstabilityPctMax;
+    final headStable = headInstabPct <= Thresholds.headInstabilityPctMax;
+
+    // Ravnost nogu — udjeli "straight" frameova
+    double ratio(List<bool> s) =>
+        s.isEmpty ? 0.0 : s.where((b) => b).length / s.length;
+
+    final movingStraightRatio = ratio(movingKneeStraightSeries);
+    final stillStraightRatio = ratio(stillKneeStraightSeries);
+
+    final movingStraightOk =
+        movingStraightRatio >= Thresholds.movingStraightRatioMin;
+    final stillStraightOk =
+        stillStraightRatio >= Thresholds.stillStraightRatioMin;
+
+    // Maks. fleksija kuka (za geometrijsku ocjenu)
+    final hipFlexMax = hipFlexSeries.reduce(math.max);
+
+    int scoreGeom;
+    if (hipFlexMax <= Thresholds.aslrScore1Max)
+      scoreGeom = 1;
+    else if (hipFlexMax <= Thresholds.aslrScore2Max)
+      scoreGeom = 2;
+    else
+      scoreGeom = 3;
+
+    // Isključujući kriteriji
+    final constraintsOk =
+        (trunkStable && headStable && movingStraightOk && stillStraightOk);
+
+    // Feature-i + flagovi
+    final features = {
+      'framesAnalyzed': validFrames,
+      'movingSide': movingLeftLeg ? 'left' : 'right',
+
+      // Metrike
+      'hipFlexMaxDeg': hipFlexMax,
+      'trunkInstabilityPct': trunkInstabPct,
+      'headInstabilityPct': headInstabPct,
+      'movingKneeStraightRatio': movingStraightRatio,
+      'stillKneeStraightRatio': stillStraightRatio,
+
+      // Flagovi (za izvještaj/HistoryScreen)
+      'trunkStable': trunkStable,
+      'headStable': headStable,
+      'movingStraightOk': movingStraightOk,
+      'stillStraightOk': stillStraightOk,
+      'constraintsOk': constraintsOk,
+      'scoreGeom': scoreGeom,
+    };
+
+    // Ako ne zadovolji isključujuće kriterije → konzervativno ograniči na 1
+    if (!constraintsOk) {
+      return ExerciseAnalysisResult(1, {
+        ...features,
+        'note':
+            'Exclusion failed (trunk/head stability or leg straightness). Score constrained to 1.',
+      });
+    }
+
+    return ExerciseAnalysisResult(scoreGeom, features);
+  }
+
+  // ----------------- Squat (čučanj) -----------------
+  static ExerciseAnalysisResult _analyzeSquat(List<Pose> frames) {
+    if (frames.isEmpty) {
+      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
+    }
+
+    final leftKneeSeries = <double>[];
+    final rightKneeSeries = <double>[];
+    final torsoSeries = <double>[]; // veće = uspravnije (~180 najbolji)
+
+    for (final p in frames) {
+      final lh = p.landmarks[PoseLandmarkType.leftHip];
+      final rh = p.landmarks[PoseLandmarkType.rightHip];
+      final lk = p.landmarks[PoseLandmarkType.leftKnee];
+      final rk = p.landmarks[PoseLandmarkType.rightKnee];
+      final la = p.landmarks[PoseLandmarkType.leftAnkle];
+      final ra = p.landmarks[PoseLandmarkType.rightAnkle];
+      final ls = p.landmarks[PoseLandmarkType.leftShoulder];
+      final rs = p.landmarks[PoseLandmarkType.rightShoulder];
+      if ([lh, rh, lk, rk, la, ra, ls, rs].any((e) => e == null)) continue;
+
+      final lKnee = angle(lh!, lk!, la!);
+      final rKnee = angle(rh!, rk!, ra!);
+      leftKneeSeries.add(lKnee);
+      rightKneeSeries.add(rKnee);
+
+      final lTorso = angle(ls!, lh, la);
+      final rTorso = angle(rs!, rh, ra);
+      torsoSeries.add((lTorso + rTorso) / 2.0);
+    }
+
+    if (leftKneeSeries.isEmpty) {
+      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
+    }
+
+    final lKneeMax = leftKneeSeries.reduce(math.max);
+    final rKneeMax = rightKneeSeries.reduce(math.max);
+    final torsoAvg = torsoSeries.reduce((a, b) => a + b) / torsoSeries.length;
+
+    final depthOk =
+        (lKneeMax > Thresholds.squatKneeDepthDeg &&
+            rKneeMax > Thresholds.squatKneeDepthDeg);
+    final torsoOk = torsoAvg >= Thresholds.squatTorsoUprightDeg;
+
+    int score;
+    if (depthOk && torsoOk)
+      score = 3;
+    else if (depthOk)
+      score = 2;
+    else
+      score = 1;
+
+    final reps = _countReps(
+      List<double>.generate(
+        leftKneeSeries.length,
+        (i) => (leftKneeSeries[i] + rightKneeSeries[i]) / 2,
+      ),
+      downThresh: 125,
+      upThresh: 105,
+      smallerIsDown: false,
+    );
+
+    final features = {
+      'framesAnalyzed': leftKneeSeries.length,
+      'kneeFlexionMaxLeft': lKneeMax,
+      'kneeFlexionMaxRight': rKneeMax,
+      'torsoAngleAvg': torsoAvg,
+      'depthOk': depthOk,
+      'torsoOk': torsoOk,
+      'reps': reps,
+      'scoreHeuristic': score,
+    };
+
+    return ExerciseAnalysisResult(score, features);
+  }
+
+  // ----------------- Reps helper -----------------
   static bool _isMovingDown(
     double angle, {
     required double downThresh,
@@ -43,7 +374,6 @@ class PoseAnalysisUtils {
     return smallerIsDown ? angle <= downThresh : angle >= downThresh;
   }
 
-  /// Checks if the user is moving up based on the `smallerIsDown` flag and thresholds.
   static bool _isMovingUp(
     double angle, {
     required double upThresh,
@@ -52,19 +382,16 @@ class PoseAnalysisUtils {
     return smallerIsDown ? angle >= upThresh : angle <= upThresh;
   }
 
-  /// A more robust threshold-crossing helper for rep counting.
   static int _countReps(
     List<double> series, {
-    required double downThresh, // angle considered "at bottom" (or up)
-    required double upThresh, // "at top"
-    bool smallerIsDown = false, // whether going smaller angle means "down"
+    required double downThresh,
+    required double upThresh,
+    bool smallerIsDown = false,
   }) {
     if (series.isEmpty) return 0;
     int reps = 0;
     bool reachedDown = false;
-
     for (final v in series) {
-      // Transition from UP to DOWN
       if (_isMovingDown(
         v,
         downThresh: downThresh,
@@ -72,8 +399,6 @@ class PoseAnalysisUtils {
       )) {
         reachedDown = true;
       }
-
-      // Transition from DOWN to UP (completion of one rep)
       if (reachedDown &&
           _isMovingUp(v, upThresh: upThresh, smallerIsDown: smallerIsDown)) {
         reps++;
@@ -81,326 +406,5 @@ class PoseAnalysisUtils {
       }
     }
     return reps;
-  }
-
-  /// Public API: get score + features for a movement, from a list of frames/poses.
-  static ExerciseAnalysisResult analyze(ExerciseType type, List<Pose> frames) {
-    switch (type) {
-      case ExerciseType.overheadSquat:
-        return _analyzeOverheadSquat(frames);
-      case ExerciseType.standardPushUp:
-        return _analyzePushUp(frames);
-      case ExerciseType.forwardLunge:
-        return _analyzeLunge(frames);
-    }
-  }
-
-  // ---------- Overhead Squat ----------
-  // Heuristics closer to FMS (still 2D):
-  // 3: Hips below knees (depth), knees track (no valgus), arms stay near overhead (shoulder-elbow-wrist ~180), torso relatively upright.
-  // 2: Depth achieved but with compensations (valgus OR arms drop OR torso lean).
-  // 1: No depth.
-  // 0: No data.
-  static ExerciseAnalysisResult _analyzeOverheadSquat(List<Pose> frames) {
-    if (frames.isEmpty) {
-      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
-    }
-
-    final leftKneeSeries = <double>[];
-    final rightKneeSeries = <double>[];
-    final armSeries =
-        <
-          double
-        >[]; // average of left/right (shoulder-elbow-wrist), higher is better (close to 180)
-    final torsoSeries =
-        <
-          double
-        >[]; // average torso angle (shoulder-hip-ankle), higher is more upright
-
-    bool anyDepth = false;
-    bool valgusOrArmsOrTorsoComp = false;
-
-    for (final p in frames) {
-      final lh = p.landmarks[PoseLandmarkType.leftHip];
-      final rh = p.landmarks[PoseLandmarkType.rightHip];
-      final lk = p.landmarks[PoseLandmarkType.leftKnee];
-      final rk = p.landmarks[PoseLandmarkType.rightKnee];
-      final la = p.landmarks[PoseLandmarkType.leftAnkle];
-      final ra = p.landmarks[PoseLandmarkType.rightAnkle];
-      final ls = p.landmarks[PoseLandmarkType.leftShoulder];
-      final rs = p.landmarks[PoseLandmarkType.rightShoulder];
-      final le = p.landmarks[PoseLandmarkType.leftElbow];
-      final re = p.landmarks[PoseLandmarkType.rightElbow];
-      final lw = p.landmarks[PoseLandmarkType.leftWrist];
-      final rw = p.landmarks[PoseLandmarkType.rightWrist];
-
-      if ([
-        lh,
-        rh,
-        lk,
-        rk,
-        la,
-        ra,
-        ls,
-        rs,
-        le,
-        re,
-        lw,
-        rw,
-      ].any((e) => e == null)) {
-        continue;
-      }
-
-      final lKnee = angle(lh!, lk!, la!);
-      final rKnee = angle(rh!, rk!, ra!);
-      leftKneeSeries.add(lKnee);
-      rightKneeSeries.add(rKnee);
-
-      // Arms overhead: shoulder–elbow–wrist angle close to 180
-      final lArm = angle(ls!, le!, lw!);
-      final rArm = angle(rs!, re!, rw!);
-      armSeries.add((lArm + rArm) / 2);
-
-      // Torso upright: shoulder–hip–ankle angle close to 180
-      final lTorso = angle(ls, lh, la);
-      final rTorso = angle(rs, rh, ra);
-      torsoSeries.add((lTorso + rTorso) / 2);
-    }
-
-    if (leftKneeSeries.isEmpty) {
-      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
-    }
-
-    // Depth: consider both knees > 120 at bottom (heuristic)
-    final lKneeMax = leftKneeSeries.reduce(math.max);
-    final rKneeMax = rightKneeSeries.reduce(math.max);
-    if (lKneeMax > 120 && rKneeMax > 120) {
-      anyDepth = true;
-    }
-
-    // Compensations:
-    // - Arms drop: average arms below ~160
-    final armAvg = armSeries.reduce((a, b) => a + b) / armSeries.length;
-    final armsDrop = armAvg < 160;
-
-    // - Torso lean: average torso below ~150
-    final torsoAvg = torsoSeries.reduce((a, b) => a + b) / torsoSeries.length;
-    final torsoLean = torsoAvg < 150;
-
-    // - Knee valgus (very rough 2D proxy): compare knee x vs ankle x relative to hip x — skipped (camera/frontal needed).
-    // As a proxy, if min knee angle is very small (<100) at any point, flag compensation
-    final lKneeMin = leftKneeSeries.reduce(math.min);
-    final rKneeMin = rightKneeSeries.reduce(math.min);
-    final kneeComp = (lKneeMin < 100 || rKneeMin < 100);
-
-    valgusOrArmsOrTorsoComp = armsDrop || torsoLean || kneeComp;
-
-    // Count "reps": knee angle passing down/up thresholds
-    final reps = _countReps(
-      List<double>.generate(
-        leftKneeSeries.length,
-        (i) => (leftKneeSeries[i] + rightKneeSeries[i]) / 2,
-      ),
-      downThresh: 125,
-      upThresh:
-          105, // go down beyond 125, back up below ~105 (heuristic direction=larger=down)
-      smallerIsDown: false,
-    );
-
-    final features = {
-      'framesAnalyzed': leftKneeSeries.length,
-      'kneeFlexionMaxLeft': lKneeMax,
-      'kneeFlexionMaxRight': rKneeMax,
-      'kneeFlexionMinLeft': lKneeMin,
-      'kneeFlexionMinRight': rKneeMin,
-      'armsAngleAvg': armAvg,
-      'torsoAngleAvg': torsoAvg,
-      'reps': reps,
-    };
-
-    int score;
-    if (anyDepth && !valgusOrArmsOrTorsoComp)
-      score = 3;
-    else if (anyDepth)
-      score = 2;
-    else
-      score = 1;
-
-    return ExerciseAnalysisResult(score, features);
-  }
-
-  // ---------- Push-Up ----------
-  // 3: Body straight (shoulder-hip-ankle near 180), elbow ≤ 90 at bottom, consistent reps.
-  // 2: Full depth but body sags/pikes.
-  // 1: No full depth.
-  // 0: No data.
-  static ExerciseAnalysisResult _analyzePushUp(List<Pose> frames) {
-    if (frames.isEmpty) {
-      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
-    }
-
-    final elbowSeries = <double>[]; // min is good depth (<=90)
-    final bodySeries = <double>[]; // higher (~180) is straighter
-
-    for (final p in frames) {
-      final ls = p.landmarks[PoseLandmarkType.leftShoulder];
-      final rs = p.landmarks[PoseLandmarkType.rightShoulder];
-      final le = p.landmarks[PoseLandmarkType.leftElbow];
-      final re = p.landmarks[PoseLandmarkType.rightElbow];
-      final lw = p.landmarks[PoseLandmarkType.leftWrist];
-      final rw = p.landmarks[PoseLandmarkType.rightWrist];
-      final lh = p.landmarks[PoseLandmarkType.leftHip];
-      final rh = p.landmarks[PoseLandmarkType.rightHip];
-      final la = p.landmarks[PoseLandmarkType.leftAnkle];
-      final ra = p.landmarks[PoseLandmarkType.rightAnkle];
-
-      if ([ls, rs, le, re, lw, rw, lh, rh, la, ra].any((e) => e == null)) {
-        continue;
-      }
-
-      final leftElbow = angle(ls!, le!, lw!);
-      final rightElbow = angle(rs!, re!, rw!);
-      elbowSeries.add(math.min(leftElbow, rightElbow));
-
-      final leftBody = angle(ls, lh!, la!);
-      final rightBody = angle(rs, rh!, ra!);
-      bodySeries.add((leftBody + rightBody) / 2);
-    }
-
-    if (elbowSeries.isEmpty) {
-      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
-    }
-
-    final elbowMin = elbowSeries.reduce(math.min);
-    final bodyAvg = bodySeries.reduce((a, b) => a + b) / bodySeries.length;
-
-    final fullDepth = elbowMin <= 90;
-    final bodyStraight = bodyAvg >= 170;
-
-    final reps = _countReps(
-      elbowSeries,
-      downThresh: 95,
-      upThresh: 150, // go down <=95 then up >=150
-      smallerIsDown: true,
-    );
-
-    final features = {
-      'framesAnalyzed': elbowSeries.length,
-      'elbowMin': elbowMin,
-      'bodyAvg': bodyAvg,
-      'reps': reps,
-    };
-
-    int score;
-    if (fullDepth && bodyStraight)
-      score = 3;
-    else if (fullDepth)
-      score = 2;
-    else
-      score = 1;
-
-    return ExerciseAnalysisResult(score, features);
-  }
-
-  // ---------- Forward Lunge ----------
-  // 3: Front knee near 90 (85..110), torso upright (>=160), no big collapse.
-  // 2: Reached depth but compensation.
-  // 1: No depth.
-  // 0: No data.
-  static ExerciseAnalysisResult _analyzeLunge(List<Pose> frames) {
-    if (frames.isEmpty) {
-      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
-    }
-
-    final frontKneeSeries = <double>[];
-    final torsoSeries = <double>[];
-
-    // Determine the direction of the lunge from the first frame
-    final firstPose = frames.firstWhere(
-      (p) =>
-          p.landmarks[PoseLandmarkType.leftHip] != null &&
-          p.landmarks[PoseLandmarkType.rightHip] != null &&
-          p.landmarks[PoseLandmarkType.leftKnee] != null &&
-          p.landmarks[PoseLandmarkType.rightKnee] != null,
-      orElse: () => null!,
-    );
-
-    if (firstPose == null) {
-      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
-    }
-
-    final lHip = firstPose.landmarks[PoseLandmarkType.leftHip]!;
-    final rHip = firstPose.landmarks[PoseLandmarkType.rightHip]!;
-    final lKnee = firstPose.landmarks[PoseLandmarkType.leftKnee]!;
-    final rKnee = firstPose.landmarks[PoseLandmarkType.rightKnee]!;
-
-    // A more reliable method is to check which knee is forward relative to the hip
-    final initialIsLeftForward =
-        (lKnee.x - lHip.x).abs() > (rKnee.x - rHip.x).abs();
-
-    for (final p in frames) {
-      final lh = p.landmarks[PoseLandmarkType.leftHip];
-      final rh = p.landmarks[PoseLandmarkType.rightHip];
-      final lk = p.landmarks[PoseLandmarkType.leftKnee];
-      final rk = p.landmarks[PoseLandmarkType.rightKnee];
-      final la = p.landmarks[PoseLandmarkType.leftAnkle];
-      final ra = p.landmarks[PoseLandmarkType.rightAnkle];
-      final ls = p.landmarks[PoseLandmarkType.leftShoulder];
-      final rs = p.landmarks[PoseLandmarkType.rightShoulder];
-
-      if ([ls, rs, lh, rh, lk, rk, la, ra].any((e) => e == null)) {
-        continue;
-      }
-
-      // Dynamically select the front leg for this frame
-      final useLeftAsFront = (lk!.x - lh!.x).abs() > (rk!.x - rh!.x).abs();
-
-      final frontKneeAngle =
-          useLeftAsFront ? angle(lh!, lk!, la!) : angle(rh!, rk!, ra!);
-
-      // Calculate torso angle using the landmarks of the front leg
-      final torsoAngle =
-          useLeftAsFront ? angle(ls!, lh, lk) : angle(rs!, rh, rk);
-
-      frontKneeSeries.add(frontKneeAngle);
-      torsoSeries.add(torsoAngle);
-    }
-
-    if (frontKneeSeries.isEmpty) {
-      return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
-    }
-
-    final kneeMin = frontKneeSeries.reduce(math.min);
-    final kneeMax = frontKneeSeries.reduce(math.max);
-    final torsoAvg = torsoSeries.reduce((a, b) => a + b) / torsoSeries.length;
-
-    final depth =
-        (kneeMin >= 85 && kneeMin <= 110) || (kneeMax >= 85 && kneeMax <= 110);
-    final torsoUpright = torsoAvg >= 160;
-
-    final reps = _countReps(
-      frontKneeSeries,
-      downThresh: 95,
-      upThresh: 120,
-      smallerIsDown: true,
-    );
-
-    final features = {
-      'framesAnalyzed': frontKneeSeries.length,
-      'frontKneeMin': kneeMin,
-      'frontKneeMax': kneeMax,
-      'torsoAvg': torsoAvg,
-      'reps': reps,
-    };
-
-    int score;
-    if (depth && torsoUpright)
-      score = 3;
-    else if (depth)
-      score = 2;
-    else
-      score = 1;
-
-    return ExerciseAnalysisResult(score, features);
   }
 }
