@@ -121,7 +121,7 @@ class PoseAnalysisUtils {
     );
   }
 
-  /// Verzija s self-report kontekstom (bol → automatski score=0)
+
   static ExerciseAnalysisResult analyzeWithContext(
     ExerciseType type,
     List<Pose> frames, {
@@ -156,11 +156,9 @@ class PoseAnalysisUtils {
       return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
     }
 
-    // Serije za stabilnost trupa i glave
     final trunkDistSeries = <double>[];
     final headDistSeries = <double>[];
 
-    // Serije za ravnost nogu i fleksiju
     final movingKneeStraightSeries = <bool>[];
     final stillKneeStraightSeries = <bool>[];
     final hipFlexSeries = <double>[];
@@ -184,7 +182,6 @@ class PoseAnalysisUtils {
 
       final midShoulder = _mid(ls!, rs!);
 
-      // 1) Stabilnost trupa i glave (distance kroz vrijeme)
       final trunkLeft = dist(ls, lh!);
       final trunkRight = dist(rs, rh!);
       trunkDistSeries.add((trunkLeft + trunkRight) / 2.0);
@@ -192,7 +189,7 @@ class PoseAnalysisUtils {
       final headToShoulders = dist(nose!, midShoulder);
       headDistSeries.add(headToShoulders);
 
-      // 2) Ravnost nogu
+
       final movingHip = movingLeftLeg ? lh : rh;
       final movingKnee = movingLeftLeg ? lk : rk;
       final movingAnkle = movingLeftLeg ? la : ra;
@@ -211,7 +208,7 @@ class PoseAnalysisUtils {
       movingKneeStraightSeries.add(movingStraight);
       stillKneeStraightSeries.add(stillStraight);
 
-      // 3) Fleksija kuka (koristi ipsilateralno rame kao referencu)
+    
       final ipsiShoulder = movingLeftLeg ? ls : rs;
       final hipFlex = hipFlexionDeg(ipsiShoulder!, movingHip, movingKnee);
       hipFlexSeries.add(hipFlex);
@@ -223,13 +220,13 @@ class PoseAnalysisUtils {
       return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
     }
 
-    // Stabilnost
+  
     final trunkInstabPct = instabilityPercent(trunkDistSeries);
     final headInstabPct = instabilityPercent(headDistSeries);
     final trunkStable = trunkInstabPct <= Thresholds.trunkInstabilityPctMax;
     final headStable = headInstabPct <= Thresholds.headInstabilityPctMax;
 
-    // Ravnost nogu — udjeli "straight" frameova
+  
     double ratio(List<bool> s) =>
         s.isEmpty ? 0.0 : s.where((b) => b).length / s.length;
 
@@ -241,7 +238,7 @@ class PoseAnalysisUtils {
     final stillStraightOk =
         stillStraightRatio >= Thresholds.stillStraightRatioMin;
 
-    // Maks. fleksija kuka (za geometrijsku ocjenu)
+
     final hipFlexMax = hipFlexSeries.reduce(math.max);
 
     int scoreGeom;
@@ -252,23 +249,19 @@ class PoseAnalysisUtils {
     else
       scoreGeom = 3;
 
-    // Isključujući kriteriji
     final constraintsOk =
         (trunkStable && headStable && movingStraightOk && stillStraightOk);
 
-    // Feature-i + flagovi
     final features = {
       'framesAnalyzed': validFrames,
       'movingSide': movingLeftLeg ? 'left' : 'right',
-
-      // Metrike
+ 
       'hipFlexMaxDeg': hipFlexMax,
       'trunkInstabilityPct': trunkInstabPct,
       'headInstabilityPct': headInstabPct,
       'movingKneeStraightRatio': movingStraightRatio,
       'stillKneeStraightRatio': stillStraightRatio,
 
-      // Flagovi (za izvještaj/HistoryScreen)
       'trunkStable': trunkStable,
       'headStable': headStable,
       'movingStraightOk': movingStraightOk,
@@ -277,7 +270,6 @@ class PoseAnalysisUtils {
       'scoreGeom': scoreGeom,
     };
 
-    // Ako ne zadovolji isključujuće kriterije → konzervativno ograniči na 1
     if (!constraintsOk) {
       return ExerciseAnalysisResult(1, {
         ...features,
@@ -285,7 +277,6 @@ class PoseAnalysisUtils {
             'Exclusion failed (trunk/head stability or leg straightness). Score constrained to 1.',
       });
     }
-
     return ExerciseAnalysisResult(scoreGeom, features);
   }
 

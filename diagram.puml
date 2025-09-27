@@ -1,0 +1,338 @@
+@startuml
+top to bottom direction
+set namespaceSeparator ::
+skinparam nodesep 10
+skinparam ranksep 20
+
+' ───────────── Page 1: Core / Models / Utils ─────────────
+
+class "flutter_fms::providers::auth_provider.dart::AuthProvider" {
+  -bool _isLoading
+  +bool isLoading
+  +void setLoading()
+}
+
+"flutter::src::foundation::change_notifier.dart::ChangeNotifier" <|-- "flutter_fms::providers::auth_provider.dart::AuthProvider"
+
+class "flutter_fms::firebase_options.dart::DefaultFirebaseOptions" {
+  {static} +FirebaseOptions android
+  {static} +FirebaseOptions ios
+  {static} +FirebaseOptions currentPlatform
+}
+
+"flutter_fms::firebase_options.dart::DefaultFirebaseOptions" o-- "firebase_core_platform_interface::firebase_core_platform_interface.dart::FirebaseOptions"
+
+class "flutter_fms::utils::pose_analysis_utils.dart::Thresholds" {
+  {static} +double trunkInstabilityPctMax
+  {static} +double headInstabilityPctMax
+  {static} +double kneeStraightMinDeg
+  {static} +double movingStraightRatioMin
+  {static} +double stillStraightRatioMin
+  {static} +double aslrScore1Max
+  {static} +double aslrScore2Max
+  {static} +double squatKneeDepthDeg
+  {static} +double squatTorsoUprightDeg
+}
+
+class "flutter_fms::utils::pose_analysis_utils.dart::ExerciseAnalysisResult" {
+  +int score
+  +Map<String, dynamic> features
+}
+
+class "flutter_fms::utils::pose_analysis_utils.dart::PoseAnalysisUtils" {
+  {static} +double angle()
+  {static} +double dist()
+  {static} +double instabilityPercent()
+  {static} +bool kneeStraight()
+  {static} +double hipFlexionDeg()
+  {static} -PoseLandmark _mid()
+  {static} +ExerciseAnalysisResult analyze()
+  {static} +ExerciseAnalysisResult analyzeWithContext()
+  {static} -ExerciseAnalysisResult _analyzeASLR()
+  {static} -ExerciseAnalysisResult _analyzeSquat()
+  {static} -bool _isMovingDown()
+  {static} -bool _isMovingUp()
+  {static} -int _countReps()
+}
+
+class "flutter_fms::utils::pose_analysis_utils.dart::ExerciseType" {
+  +int index
+  {static} +List<ExerciseType> values
+  {static} +ExerciseType squat
+  {static} +ExerciseType activeLegRaiseLeft
+  {static} +ExerciseType activeLegRaiseRight
+}
+
+"flutter_fms::utils::pose_analysis_utils.dart::ExerciseType" o-- "flutter_fms::utils::pose_analysis_utils.dart::ExerciseType"
+"dart::core::Enum" <|-- "flutter_fms::utils::pose_analysis_utils.dart::ExerciseType"
+
+class "flutter_fms::models::fms_session_model.dart::FMSSessionModel" {
+  +String? id
+  +String userId
+  +DateTime timestamp
+  +String exercise
+  +int rating
+  +String notes
+  +String feedback
+  +bool painLowBack
+  +bool painHamstringOrCalf
+  +String? videoUrl
+  +Map<String, dynamic>? features
+  +Map<String, dynamic> toMap()
+  +FMSSessionModel copyWith()
+}
+
+class "flutter_fms::models::user_profile_model.dart::UserProfileModel" {
+  +String uid
+  +String email
+  +String displayName
+  +DateTime createdAt
+  +int? age
+  +String? sex
+  +double? heightCm
+  +double? weightKg
+  +Map<String, dynamic> toMap()
+}
+
+class "flutter_fms::main.dart::MyApp" {
+  +List<CameraDescription> cameras
+  +Widget build()
+}
+
+"flutter::src::widgets::framework.dart::StatelessWidget" <|-- "flutter_fms::main.dart::MyApp"
+
+
+newpage
+
+
+' ───────────── Page 2: Auth / Shell / Home ─────────────
+
+class "flutter_fms::screens::app_shell.dart::AppShell" {
+  +List<CameraDescription> cameras
+  +State<AppShell> createState()
+}
+
+"flutter::src::widgets::framework.dart::StatefulWidget" <|-- "flutter_fms::screens::app_shell.dart::AppShell"
+
+class "flutter_fms::screens::app_shell.dart::_AppShellState" {
+  -int _index
+  +Widget build()
+}
+
+"flutter::src::widgets::framework.dart::State" <|-- "flutter_fms::screens::app_shell.dart::_AppShellState"
+
+class "flutter_fms::screens::home::edit_profile_screen.dart::EditProfileScreen" {
+  +State<EditProfileScreen> createState()
+}
+
+"flutter::src::widgets::framework.dart::StatefulWidget" <|-- "flutter_fms::screens::home::edit_profile_screen.dart::EditProfileScreen"
+
+class "flutter_fms::screens::home::edit_profile_screen.dart::_EditProfileScreenState" {
+  -GlobalKey<FormState> _formKey
+  -TextEditingController _displayNameCtrl
+  -TextEditingController _ageCtrl
+  -TextEditingController _heightCtrl
+  -TextEditingController _weightCtrl
+  -String _sex
+  +void dispose()
+  -dynamic _save()
+  +Widget build()
+}
+
+"flutter_fms::screens::home::edit_profile_screen.dart::_EditProfileScreenState" o-- "flutter::src::widgets::framework.dart::GlobalKey<FormState>"
+"flutter_fms::screens::home::edit_profile_screen.dart::_EditProfileScreenState" o-- "flutter::src::widgets::editable_text.dart::TextEditingController"
+"flutter::src::widgets::framework.dart::State" <|-- "flutter_fms::screens::home::edit_profile_screen.dart::_EditProfileScreenState"
+
+class "flutter_fms::screens::auth::register_screen.dart::RegisterScreen" {
+  +Function toggleView
+  +State<RegisterScreen> createState()
+}
+
+"flutter::src::widgets::framework.dart::StatefulWidget" <|-- "flutter_fms::screens::auth::register_screen.dart::RegisterScreen"
+
+class "flutter_fms::screens::auth::register_screen.dart::_RegisterScreenState" {
+  -GlobalKey<FormState> _formKey
+  -TextEditingController _emailController
+  -TextEditingController _passwordController
+  -TextEditingController _displayNameController
+  -TextEditingController _ageController
+  -String _sex
+  -TextEditingController _heightController
+  -TextEditingController _weightController
+  -String? _errorMessage
+  +void dispose()
+  -dynamic _register()
+  +Widget build()
+}
+
+"flutter_fms::screens::auth::register_screen.dart::_RegisterScreenState" o-- "flutter::src::widgets::framework.dart::GlobalKey<FormState>"
+"flutter_fms::screens::auth::register_screen.dart::_RegisterScreenState" o-- "flutter::src::widgets::editable_text.dart::TextEditingController"
+"flutter::src::widgets::framework.dart::State" <|-- "flutter_fms::screens::auth::register_screen.dart::_RegisterScreenState"
+
+class "flutter_fms::screens::auth::login_screen.dart::LoginScreen" {
+  +Function toggleView
+  +State<LoginScreen> createState()
+}
+
+"flutter::src::widgets::framework.dart::StatefulWidget" <|-- "flutter_fms::screens::auth::login_screen.dart::LoginScreen"
+
+class "flutter_fms::screens::auth::login_screen.dart::_LoginScreenState" {
+  -GlobalKey<FormState> _formKey
+  -TextEditingController _emailController
+  -TextEditingController _passwordController
+  -String? _errorMessage
+  +void dispose()
+  -void _login()
+  +Widget build()
+}
+
+"flutter_fms::screens::auth::login_screen.dart::_LoginScreenState" o-- "flutter::src::widgets::framework.dart::GlobalKey<FormState>"
+"flutter_fms::screens::auth::login_screen.dart::_LoginScreenState" o-- "flutter::src::widgets::editable_text.dart::TextEditingController"
+"flutter::src::widgets::framework.dart::State" <|-- "flutter_fms::screens::auth::login_screen.dart::_LoginScreenState"
+
+class "flutter_fms::screens::auth::auth_gate.dart::AuthGate" {
+  +List<CameraDescription> cameras
+  +Widget build()
+}
+
+"flutter::src::widgets::framework.dart::StatelessWidget" <|-- "flutter_fms::screens::auth::auth_gate.dart::AuthGate"
+
+class "flutter_fms::screens::auth::auth_screen.dart::AuthScreen" {
+  +State<AuthScreen> createState()
+}
+
+"flutter::src::widgets::framework.dart::StatefulWidget" <|-- "flutter_fms::screens::auth::auth_screen.dart::AuthScreen"
+
+class "flutter_fms::screens::auth::auth_screen.dart::_AuthScreenState" {
+  +bool showSignIn
+  +void toggleView()
+  +Widget build()
+}
+
+"flutter::src::widgets::framework.dart::State" <|-- "flutter_fms::screens::auth::auth_screen.dart::_AuthScreenState"
+
+
+newpage
+
+
+' ───────────── Page 3: Capture / History / Services / Widgets ─────────────
+
+class "flutter_fms::screens::history::history_screen.dart::HistoryScreen" {
+  +State<HistoryScreen> createState()
+}
+
+"flutter::src::widgets::framework.dart::StatefulWidget" <|-- "flutter_fms::screens::history::history_screen.dart::HistoryScreen"
+
+class "flutter_fms::screens::history::history_screen.dart::_HistoryScreenState" {
+  -FirestoreService _firestore
+  -ExerciseType? _exerciseFilter
+  -bool _sortDesc
+  -String _query
+  -DateFormat _dateFmt
+  -String _formatTs()
+  -List<FMSSessionModel> _applyFilters()
+  -dynamic _confirmDelete()
+  -Widget _buildHeader()
+  -Widget _buildFeatures()
+  -Widget _buildPainChips()
+  -Widget _buildTile()
+  +Widget build()
+}
+
+"flutter_fms::screens::history::history_screen.dart::_HistoryScreenState" o-- "flutter_fms::services::firestore_service.dart::FirestoreService"
+"flutter_fms::screens::history::history_screen.dart::_HistoryScreenState" o-- "flutter_fms::utils::pose_analysis_utils.dart::ExerciseType"
+"flutter_fms::screens::history::history_screen.dart::_HistoryScreenState" o-- "intl::src::intl::date_format.dart::DateFormat"
+"flutter::src::widgets::framework.dart::State" <|-- "flutter_fms::screens::history::history_screen.dart::_HistoryScreenState"
+
+class "flutter_fms::screens::fms_capture::fms_capture_screen.dart::FMSCaptureScreen" {
+  +List<CameraDescription> cameras
+  +State<FMSCaptureScreen> createState()
+}
+
+"flutter::src::widgets::framework.dart::StatefulWidget" <|-- "flutter_fms::screens::fms_capture::fms_capture_screen.dart::FMSCaptureScreen"
+
+class "flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState" {
+  -CameraController? _cameraController
+  -bool _isRecording
+  -String? _errorMessage
+  -ExerciseType? _selectedExercise
+  -int _currentFmsScore
+  -List<Pose> _poseHistory
+  -List<Pose> _detectedPoses
+  -PoseDetector _poseDetector
+  -CameraImage? _latestImage
+  -bool _mlBusy
+  -Timer? _mlTicker
+  -InputImageRotation _cachedRotation
+  -int _historySampleModulo
+  +void initState()
+  +void dispose()
+  +void didChangeAppLifecycleState()
+  -void _resetAnalysisState()
+  -dynamic _initializeCamera()
+  -dynamic _processLatestFrameIfAny()
+  -InputImage _toInputImage()
+  -dynamic _askSelfReportPain()
+  -dynamic _startVideoRecording()
+  -dynamic _stopVideoRecordingAndSave()
+  -dynamic _analyzeVideoFromGallery()
+  -dynamic _finalizeAndSaveSessionScore()
+  -void _selectExerciseFromMenu()
+  +Widget build()
+}
+
+"flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState" o-- "camera::src::camera_controller.dart::CameraController"
+"flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState" o-- "flutter_fms::utils::pose_analysis_utils.dart::ExerciseType"
+"flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState" o-- "google_mlkit_pose_detection::src::pose_detector.dart::PoseDetector"
+"flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState" o-- "camera::src::camera_image.dart::CameraImage"
+"flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState" o-- "dart::async::Timer"
+"flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState" o-- "google_mlkit_commons::src::input_image.dart::InputImageRotation"
+"flutter::src::widgets::framework.dart::State" <|-- "flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState"
+"flutter::src::widgets::binding.dart::WidgetsBindingObserver" <|-- "flutter_fms::screens::fms_capture::fms_capture_screen.dart::_FMSCaptureScreenState"
+
+class "flutter_fms::services::firestore_service.dart::FirestoreService" {
+  -FirebaseFirestore _firestore
+  +dynamic createUserProfile()
+  +Stream<UserProfileModel?> getUserProfile()
+  +dynamic updateUserProfile()
+  +dynamic saveFMSession()
+  +Stream<List<FMSSessionModel>> getFMSSessionsForCurrentUser()
+  +Stream<List<FMSSessionModel>> getFMSSessionsForUser()
+  +dynamic updateFMSSession()
+  +dynamic deleteFMSSession()
+}
+
+"flutter_fms::services::firestore_service.dart::FirestoreService" o-- "cloud_firestore::cloud_firestore.dart::FirebaseFirestore"
+
+class "flutter_fms::services::auth_service.dart::AuthService" {
+  -FirebaseAuth _auth
+  +Stream<User?> authStateChanges
+  +dynamic registerWithEmailAndPassword()
+  +dynamic signInWithEmailAndPassword()
+  +dynamic signOut()
+  -String _getAuthErrorMessage()
+}
+
+"flutter_fms::services::auth_service.dart::AuthService" o-- "firebase_auth::firebase_auth.dart::FirebaseAuth"
+"flutter_fms::services::auth_service.dart::AuthService" o-- "dart::async::Stream<User>"
+
+class "flutter_fms::widgets::pose_painter.dart::PosePainter" {
+  +List<Pose> poses
+  +Size imageSizeUpright
+  +InputImageRotation rotation
+  +CameraLensDirection lensDirection
+  -Paint _leftPaint
+  -Paint _rightPaint
+  -Paint _jointPaint
+  +void paint()
+  -double _coverScale()
+  +bool shouldRepaint()
+}
+
+"flutter_fms::widgets::pose_painter.dart::PosePainter" o-- "dart::ui::Size"
+"flutter_fms::widgets::pose_painter.dart::PosePainter" o-- "google_mlkit_commons::src::input_image.dart::InputImageRotation"
+"flutter_fms::widgets::pose_painter.dart::PosePainter" o-- "camera_platform_interface::src::types::camera_description.dart::CameraLensDirection"
+"flutter_fms::widgets::pose_painter.dart::PosePainter" o-- "dart::ui::Paint"
+"flutter::src::rendering::custom_paint.dart::CustomPainter" <|-- "flutter_fms::widgets::pose_painter.dart::PosePainter"
+
+@enduml
