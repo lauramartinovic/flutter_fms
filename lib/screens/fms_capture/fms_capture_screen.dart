@@ -160,6 +160,10 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
     }
   }
 
+  int? _lastFrameTime;
+  double _fps = 0;
+  int _frameCounter = 0;
+
   // Periodic ML loop — processes at most one frame at a time
   Future<void> _processLatestFrameIfAny() async {
     if (_mlBusy) return;
@@ -171,6 +175,19 @@ class _FMSCaptureScreenState extends State<FMSCaptureScreen>
     _latestImage = null;
 
     try {
+      // FPS calculation
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (_lastFrameTime != null) {
+        final diff = now - _lastFrameTime!;
+        if (diff > 0) {
+          _fps = 1000 / diff;
+        }
+      }
+      _lastFrameTime = now;
+
+      if (++_frameCounter % 10 == 0) {
+        debugPrint("Current FPS: ${_fps.toStringAsFixed(1)}");
+      }
       final input = _toInputImage(frame, _cachedRotation);
       final poses = await _poseDetector.processImage(input);
       if (!mounted) return;

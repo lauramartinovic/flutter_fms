@@ -8,19 +8,20 @@ class Thresholds {
   static const double trunkInstabilityPctMax = 8.0; // ≤8% varijacije ramena–kuk
   static const double headInstabilityPctMax =
       10.0; // ≤10% varijacije nos–sredina ramena
-  static const double kneeStraightMinDeg = 175.0; // koljeno ≳ 175° je "ravno"
+  static const double kneeStraightMinDeg = 170.0; // koljeno ≳ 170° je "ravno"
   static const double movingStraightRatioMin =
       0.90; // pokretna noga ravna ≥90% frameova
   static const double stillStraightRatioMin =
-      0.95; // nepokretna noga ravna ≥95% frameova
+      0.80; // nepokretna noga ravna ≥80% frameova
 
   // ASLR geometrija (hip flex)
   static const double aslrScore1Max = 30.0; // 0–30  → score 1
   static const double aslrScore2Max = 70.0; // 31–70 → score 2
   // >70 → score 3
 
-  // Squat
-  static const double squatKneeDepthDeg = 120.0; // oba koljena > 120° na dnu
+  // Squat (AŽURIRANO)
+  static const double squatKneeDepthDeg =
+      110.0; // dno: oba koljena < 110° (manji kut = dublje)
   static const double squatTorsoUprightDeg =
       150.0; // prosjek shoulder–hip–ankle ≥ 150°
 }
@@ -48,7 +49,7 @@ class ExerciseAnalysisResult {
 class PoseAnalysisUtils {
   // ----------------- Opće pomoćne funkcije -----------------
 
-  /// Ugaoni kut u midPoint (0..180) između (first -> mid) i (last -> mid)
+  ///  kut u midPoint (0..180) između (first -> mid) i (last -> mid)
   static double angle(
     PoseLandmark firstPoint,
     PoseLandmark midPoint,
@@ -121,7 +122,6 @@ class PoseAnalysisUtils {
     );
   }
 
-
   static ExerciseAnalysisResult analyzeWithContext(
     ExerciseType type,
     List<Pose> frames, {
@@ -189,7 +189,6 @@ class PoseAnalysisUtils {
       final headToShoulders = dist(nose!, midShoulder);
       headDistSeries.add(headToShoulders);
 
-
       final movingHip = movingLeftLeg ? lh : rh;
       final movingKnee = movingLeftLeg ? lk : rk;
       final movingAnkle = movingLeftLeg ? la : ra;
@@ -208,7 +207,6 @@ class PoseAnalysisUtils {
       movingKneeStraightSeries.add(movingStraight);
       stillKneeStraightSeries.add(stillStraight);
 
-    
       final ipsiShoulder = movingLeftLeg ? ls : rs;
       final hipFlex = hipFlexionDeg(ipsiShoulder!, movingHip, movingKnee);
       hipFlexSeries.add(hipFlex);
@@ -220,13 +218,11 @@ class PoseAnalysisUtils {
       return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
     }
 
-  
     final trunkInstabPct = instabilityPercent(trunkDistSeries);
     final headInstabPct = instabilityPercent(headDistSeries);
     final trunkStable = trunkInstabPct <= Thresholds.trunkInstabilityPctMax;
     final headStable = headInstabPct <= Thresholds.headInstabilityPctMax;
 
-  
     double ratio(List<bool> s) =>
         s.isEmpty ? 0.0 : s.where((b) => b).length / s.length;
 
@@ -238,16 +234,16 @@ class PoseAnalysisUtils {
     final stillStraightOk =
         stillStraightRatio >= Thresholds.stillStraightRatioMin;
 
-
     final hipFlexMax = hipFlexSeries.reduce(math.max);
 
     int scoreGeom;
-    if (hipFlexMax <= Thresholds.aslrScore1Max)
+    if (hipFlexMax <= Thresholds.aslrScore1Max) {
       scoreGeom = 1;
-    else if (hipFlexMax <= Thresholds.aslrScore2Max)
+    } else if (hipFlexMax <= Thresholds.aslrScore2Max) {
       scoreGeom = 2;
-    else
+    } else {
       scoreGeom = 3;
+    }
 
     final constraintsOk =
         (trunkStable && headStable && movingStraightOk && stillStraightOk);
@@ -255,7 +251,7 @@ class PoseAnalysisUtils {
     final features = {
       'framesAnalyzed': validFrames,
       'movingSide': movingLeftLeg ? 'left' : 'right',
- 
+
       'hipFlexMaxDeg': hipFlexMax,
       'trunkInstabilityPct': trunkInstabPct,
       'headInstabilityPct': headInstabPct,
@@ -306,6 +302,7 @@ class PoseAnalysisUtils {
       leftKneeSeries.add(lKnee);
       rightKneeSeries.add(rKnee);
 
+      // veći kut shoulder–hip–ankle = uspravniji trup
       final lTorso = angle(ls!, lh, la);
       final rTorso = angle(rs!, rh, ra);
       torsoSeries.add((lTorso + rTorso) / 2.0);
@@ -315,42 +312,72 @@ class PoseAnalysisUtils {
       return ExerciseAnalysisResult(0, {'framesAnalyzed': 0});
     }
 
+    // --- AŽURIRANO: koristimo MIN kut za "dno" (manji = dublje) ---
+    final lKneeMin = leftKneeSeries.reduce(math.min);
+    final rKneeMin = rightKneeSeries.reduce(math.min);
+
+    // Zadržavamo i max radi kompatibilnosti / analitike
     final lKneeMax = leftKneeSeries.reduce(math.max);
     final rKneeMax = rightKneeSeries.reduce(math.max);
+
     final torsoAvg = torsoSeries.reduce((a, b) => a + b) / torsoSeries.length;
 
+    // --- AŽURIRANO: dubina je ispunjena ako su oba koljena ispod praga ---
     final depthOk =
-        (lKneeMax > Thresholds.squatKneeDepthDeg &&
-            rKneeMax > Thresholds.squatKneeDepthDeg);
+        (lKneeMin < Thresholds.squatKneeDepthDeg &&
+            rKneeMin < Thresholds.squatKneeDepthDeg);
+
     final torsoOk = torsoAvg >= Thresholds.squatTorsoUprightDeg;
 
     int score;
-    if (depthOk && torsoOk)
+    if (depthOk && torsoOk) {
       score = 3;
-    else if (depthOk)
+    } else if (depthOk) {
       score = 2;
-    else
+    } else {
       score = 1;
+    }
+
+    // --- AŽURIRANO: repovi s "smallerIsDown: true" ---
+    // downThresh: kut pri kojem smatramo da je "dovoljno dolje" (manji)
+    // upThresh: kut pri kojem smo se vratili "gore" (veći, blizu ispruženog)
+    const double repDownThresh = 110.0; // uskladi po želji s depth pragom
+    const double repUpThresh = 155.0; // "gore" (ispruženije koljeno)
 
     final reps = _countReps(
       List<double>.generate(
         leftKneeSeries.length,
         (i) => (leftKneeSeries[i] + rightKneeSeries[i]) / 2,
       ),
-      downThresh: 125,
-      upThresh: 105,
-      smallerIsDown: false,
+      downThresh: repDownThresh,
+      upThresh: repUpThresh,
+      smallerIsDown: true, // KLJUČNA promjena
     );
 
     final features = {
       'framesAnalyzed': leftKneeSeries.length,
+
+      // Za jasnu telemetriju:
+      'kneeAngleMinLeft': lKneeMin,
+      'kneeAngleMinRight': rKneeMin,
+      'kneeAngleMaxLeft': lKneeMax,
+      'kneeAngleMaxRight': rKneeMax,
+
+      // Kompatibilnost s ranijim nazivima (ako ih prikazuješ negdje):
       'kneeFlexionMaxLeft': lKneeMax,
       'kneeFlexionMaxRight': rKneeMax,
+
       'torsoAngleAvg': torsoAvg,
       'depthOk': depthOk,
       'torsoOk': torsoOk,
       'reps': reps,
       'scoreHeuristic': score,
+
+      // Pragovi za debug/štimanje:
+      'repDownThreshDeg': repDownThresh,
+      'repUpThreshDeg': repUpThresh,
+      'repSmallerIsDown': true,
+      'depthThresholdDeg': Thresholds.squatKneeDepthDeg,
     };
 
     return ExerciseAnalysisResult(score, features);

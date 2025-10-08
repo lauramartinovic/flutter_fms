@@ -10,8 +10,6 @@ As part of this bachelor's thesis, a mobile application for the analysis of move
 
         Firebase Authentication for secure user management.
 
-        Cloud Storage for Firebase for video uploads.
-
         Cloud Firestore for structured session data and history.
 
         Google ML Kit for intelligent pose estimation and analysis. 
