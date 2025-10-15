@@ -10,7 +10,7 @@ The app uses **Google ML Kit Pose Detection** to detect human body landmarks in 
 ### **Real-time pose estimation**
 - Live camera stream with ML-powered landmark detection.
 
-### 🦵 **ASLR (Active Straight Leg Raise)** & **Squat** screening
+### **ASLR (Active Straight Leg Raise)** & **Squat** screening
 - Automatic scoring logic implemented for two core FMS exercises:
   - ASLR → hip flexion angle, trunk stability, knee extension.  
   - Squat → depth, torso upright angle, symmetry.
@@ -77,7 +77,7 @@ The app is developed in Flutter for full cross-platform support (**Android & iOS
 
 ---
 
-## 📝 **License**
+## **License**
 
 This project was developed as part of a **bachelor’s thesis** at **Sveučilište u Zadru**.  
 The application is intended for **educational** and **research** purposes and is **not a certified medical device**.
