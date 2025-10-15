@@ -2,17 +2,15 @@ import 'dart:math' as math;
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 /// =====================  Podešivi pragovi  =====================
-/// — promijeni po potrebi bez diranja ostatka koda
+
 class Thresholds {
   // ASLR
-  static const double trunkInstabilityPctMax = 8.0; // ≤8% varijacije ramena–kuk
-  static const double headInstabilityPctMax =
-      10.0; // ≤10% varijacije nos–sredina ramena
-  static const double kneeStraightMinDeg = 170.0; // koljeno ≳ 170° je "ravno"
+  static const double trunkInstabilityPctMax = 15.0; // ≤15% varijacije rame–kuk
+  static const double kneeStraightMinDeg = 160.0; // koljeno ≳ 160° je "ravno"
   static const double movingStraightRatioMin =
-      0.90; // pokretna noga ravna ≥90% frameova
+      0.75; // pokretna noga ravna ≥75% frameova
   static const double stillStraightRatioMin =
-      0.80; // nepokretna noga ravna ≥80% frameova
+      0.70; // nepokretna noga ravna ≥70% frameova
 
   // ASLR geometrija (hip flex)
   static const double aslrScore1Max = 30.0; // 0–30  → score 1
@@ -148,6 +146,7 @@ class PoseAnalysisUtils {
   }
 
   // ----------------- ASLR (Active Straight Leg Raise) -----------------
+
   static ExerciseAnalysisResult _analyzeASLR(
     List<Pose> frames, {
     required bool movingLeftLeg,
@@ -157,7 +156,6 @@ class PoseAnalysisUtils {
     }
 
     final trunkDistSeries = <double>[];
-    final headDistSeries = <double>[];
 
     final movingKneeStraightSeries = <bool>[];
     final stillKneeStraightSeries = <bool>[];
@@ -174,9 +172,8 @@ class PoseAnalysisUtils {
       final rk = p.landmarks[PoseLandmarkType.rightKnee];
       final la = p.landmarks[PoseLandmarkType.leftAnkle];
       final ra = p.landmarks[PoseLandmarkType.rightAnkle];
-      final nose = p.landmarks[PoseLandmarkType.nose];
 
-      if ([ls, rs, lh, rh, lk, rk, la, ra, nose].any((e) => e == null)) {
+      if ([ls, rs, lh, rh, lk, rk, la, ra].any((e) => e == null)) {
         continue;
       }
 
@@ -185,9 +182,6 @@ class PoseAnalysisUtils {
       final trunkLeft = dist(ls, lh!);
       final trunkRight = dist(rs, rh!);
       trunkDistSeries.add((trunkLeft + trunkRight) / 2.0);
-
-      final headToShoulders = dist(nose!, midShoulder);
-      headDistSeries.add(headToShoulders);
 
       final movingHip = movingLeftLeg ? lh : rh;
       final movingKnee = movingLeftLeg ? lk : rk;
@@ -219,9 +213,7 @@ class PoseAnalysisUtils {
     }
 
     final trunkInstabPct = instabilityPercent(trunkDistSeries);
-    final headInstabPct = instabilityPercent(headDistSeries);
     final trunkStable = trunkInstabPct <= Thresholds.trunkInstabilityPctMax;
-    final headStable = headInstabPct <= Thresholds.headInstabilityPctMax;
 
     double ratio(List<bool> s) =>
         s.isEmpty ? 0.0 : s.where((b) => b).length / s.length;
@@ -238,15 +230,14 @@ class PoseAnalysisUtils {
 
     int scoreGeom;
     if (hipFlexMax <= Thresholds.aslrScore1Max) {
-      scoreGeom = 1;
+      scoreGeom = 1; // 0–30°
     } else if (hipFlexMax <= Thresholds.aslrScore2Max) {
-      scoreGeom = 2;
+      scoreGeom = 2; // 31–70°
     } else {
-      scoreGeom = 3;
+      scoreGeom = 3; // >70°
     }
 
-    final constraintsOk =
-        (trunkStable && headStable && movingStraightOk && stillStraightOk);
+    final constraintsOk = (trunkStable && movingStraightOk && stillStraightOk);
 
     final features = {
       'framesAnalyzed': validFrames,
@@ -254,12 +245,10 @@ class PoseAnalysisUtils {
 
       'hipFlexMaxDeg': hipFlexMax,
       'trunkInstabilityPct': trunkInstabPct,
-      'headInstabilityPct': headInstabPct,
       'movingKneeStraightRatio': movingStraightRatio,
       'stillKneeStraightRatio': stillStraightRatio,
 
       'trunkStable': trunkStable,
-      'headStable': headStable,
       'movingStraightOk': movingStraightOk,
       'stillStraightOk': stillStraightOk,
       'constraintsOk': constraintsOk,
@@ -270,7 +259,7 @@ class PoseAnalysisUtils {
       return ExerciseAnalysisResult(1, {
         ...features,
         'note':
-            'Exclusion failed (trunk/head stability or leg straightness). Score constrained to 1.',
+            'Exclusion failed (trunk stability or leg straightness). Score constrained to 1.',
       });
     }
     return ExerciseAnalysisResult(scoreGeom, features);

@@ -1,14 +1,35 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show FlutterError, PlatformDispatcher;
 
-import 'package:flutter_fms/screens/auth/auth_gate.dart'; // <-- NOVO
+import 'package:flutter_fms/screens/auth/auth_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Globalni error handleri (korisno u releaseu)
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    // tu možeš poslati log u Crashlytics/Sentry ako koristiš
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    // isto — logiranje u crash alat
+    return false; // false = pusti dalje default handler
+  };
+
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  final cameras = await availableCameras();
+
+  List<CameraDescription> cameras = const [];
+  try {
+    cameras = await availableCameras();
+  } catch (e) {
+    // Ako enumeracija kamera padne (npr. nema dozvole), app i dalje radi
+    debugPrint('availableCameras() failed: $e');
+  }
+
   runApp(MyApp(cameras: cameras));
 }
 
@@ -45,7 +66,7 @@ class MyApp extends StatelessWidget {
           style: FilledButton.styleFrom(shape: const StadiumBorder()),
         ),
       ),
-      home: AuthGate(cameras: cameras), // <-- UMJESTO AppShell
+      home: AuthGate(cameras: cameras), // sve kao kod tebe
     );
   }
 }
