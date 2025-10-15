@@ -1,7 +1,7 @@
-This project is part of a bachelor’s thesis and represents a complete mobile system for automated biomechanical movement analysis.  
-The application was developed in collaboration with a professional kinesiologist, with the goal of making **Functional Movement Screening (FMS)** available on mobile devices in a precise, objective, and accessible way.
+This project is part of a bachelor’s thesis at University of Zadar and represents a complete mobile system for automated biomechanical movement analysis.  
+The application was developed in collaboration with a professional kinesiologist, with the goal of making Functional Movement Screening (FMS) available on mobile devices in a precise, objective, and accessible way.
 
-The app uses **Google ML Kit Pose Detection** to detect human body landmarks in real time and leverages a custom-built analysis layer to measure angles, stability, and movement quality, assigning a functional movement score similar to professional screening methods used in sports and rehabilitation.
+The app uses Google ML Kit Pose Detection to detect human body landmarks in real time and leverages a custom-built analysis layer to measure angles, stability, and movement quality, assigning a functional movement score similar to professional screening methods used in sports and rehabilitation.
 
 ---
 
@@ -56,13 +56,13 @@ The app is developed in Flutter for full cross-platform support (**Android & iOS
 - `PosePainter` widget draws lines and points on the live camera feed.
 
 ### **Camera & streaming**
-- Uses the `camera` plugin for preview and image stream.  
-- **iOS**: image stream + recording simultaneously.  
-- **Android**: fallback to **post-hoc ML analysis** after recording to be integrated.
+- Uses the camera plugin for preview and image stream.  
+- iOS: image stream + recording simultaneously.  
+- Android: fallback to post-hoc ML analysis after recording to be integrated.
 
 ### **Pose detection & analysis**
 - Powered by Google ML Kit Pose Detection API.  
-- Landmark data processed through a custom `PoseAnalysisUtils` class.  
+- Landmark data processed through a custom PoseAnalysisUtils class.  
 - Handles joint angle calculation, stability metrics, thresholds, and scoring.
 
 ### **Data layer (cloud)**
@@ -71,7 +71,7 @@ The app is developed in Flutter for full cross-platform support (**Android & iOS
 - Designed to support further statistical or ML analysis.
 
 ### **Scoring logic**
-- Implemented through adjustable `Thresholds` constants.  
+- Implemented through adjustable Thresholds constants.  
 - Flexibility to update biomechanical criteria (e.g., hip flexion angle cutoffs).  
 - Structured features` map for analytics and debugging.
 
@@ -79,7 +79,7 @@ The app is developed in Flutter for full cross-platform support (**Android & iOS
 
 ## **License**
 
-This project was developed as part of a **bachelor’s thesis** at **Sveučilište u Zadru**.  
-The application is intended for **educational** and **research** purposes and is **not a certified medical device**.
+This project was developed as part of a bachelor’s thesis at Sveučilište u Zadru.  
+The application is intended for educational and research purposes and is not a certified medical device.
 
 ---
