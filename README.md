@@ -49,11 +49,11 @@ The app uses Google ML Kit Pose Detection to detect human body landmarks in real
 
 ## **Architecture Overview**
 
-The app is developed in Flutter for full cross-platform support (**Android & iOS**).
+The app is developed in Flutter for full cross-platform support (Android & iOS).
 
 ### **Presentation layer**
 - Flutter UI with real-time camera preview and skeleton overlay.  
-- `PosePainter` widget draws lines and points on the live camera feed.
+- PosePainter widget draws lines and points on the live camera feed.
 
 ### **Camera & streaming**
 - Uses the camera plugin for preview and image stream.  
