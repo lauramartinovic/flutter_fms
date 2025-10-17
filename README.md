@@ -75,7 +75,30 @@ The app is developed in Flutter for full cross-platform support (Android & iOS).
 - Flexibility to update biomechanical criteria (e.g., hip flexion angle cutoffs).  
 - Structured features` map for analytics and debugging.
 
+### Minimum Requirements
+- Flutter SDK 3.0+
+- iOS 15+ or Android 8+
+- Camera access permission
+- Firebase project configured
+
 ---
+
+## How to Run (with bundled Firebase config)
+
+> **Note:** This repo includes Firebase configuration files.  
+> Everyone who runs the app will connect to the **same Firebase project**.  
+> Do **not** store sensitive data and avoid using this backend for production.
+
+### Prerequisites
+- **Flutter SDK** 3.x (`flutter --version`)
+- **Platform tools:**
+  - **iOS:** macOS + Xcode + CocoaPods (`sudo gem install cocoapods`)
+  - **Android:** Android Studio 
+
+### 1) Clone & install dependencies
+```bash
+git clone https://github.com/lauramartinovic/flutter_fms.git
+flutter pub get
 
 ## **License**
 
