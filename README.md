@@ -3,7 +3,7 @@
 This project is part of a **bachelor’s thesis at the University of Zadar** and represents a complete **mobile system for automated biomechanical movement analysis**.  
 The application was developed in collaboration with a **professional kinesiologist**, with the goal of making **Functional Movement Screening (FMS)** available on mobile devices in a **precise, objective, and accessible** way.
 
-The app uses **Google ML Kit Pose Detection** to detect human body landmarks in real time and leverages a **custom-built analysis layer** to measure angles, stability, and movement quality — assigning a functional movement score similar to professional screening methods used in sports and rehabilitation.
+The app uses **Google ML Kit Pose Detection** to detect human body landmarks in real time and leverages a **custom-built analysis layer** to measure angles, stability, and movement quality assigning a functional movement score similar to professional screening methods used in sports and rehabilitation.
 
 ---
 
@@ -101,10 +101,11 @@ The app is developed in **Flutter** for full cross-platform support (Android & i
   - **Android:** Android Studio
 
 ### 1) Clone & install dependencies
-
+```bash
 git clone https://github.com/lauramartinovic/flutter_fms.git
 cd flutter_fms
 flutter pub get
+```
 
 ### License
 
